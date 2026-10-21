@@ -63,13 +63,15 @@ struct RemoteImage: View {
 
     var body: some View {
         let px = size * scale
-        ZStack {
-            if let img = image ?? url.flatMap({ Images.cached($0, px) }) {
-                Image(uiImage: img).resizable().aspectRatio(contentMode: fill ? .fill : .fit)
+        // The picture is an overlay, so it never changes the size of its frame: a backdrop
+        // wider or taller than its slot is cropped instead of pushing the page off the screen.
+        Color.clear
+            .overlay {
+                if let img = image ?? url.flatMap({ Images.cached($0, px) }) {
+                    Image(uiImage: img).resizable().aspectRatio(contentMode: fill ? .fill : .fit)
+                }
             }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .clipped()
+            .clipped()
         .task(id: url) {
             guard let url else { image = nil; return }
             if Images.cached(url, px) == nil { image = nil }

@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2
+- **Pages fit the screen.** On iPhone the series and film pages no longer slide off the left edge, and on iPad the Play and Info buttons are no longer cut off under the big picture.
+
 ## 1.1
 - **Search is ready sooner.** The lists search uses are prepared in the background on Wi-Fi, so the first search no longer waits a minute. Mobile data is never used for this.
 - **Clearer player.** While a film loads, the loading wheel takes the play button's place instead of sitting on top of it.
