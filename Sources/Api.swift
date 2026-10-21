@@ -82,12 +82,24 @@ enum Api {
         return d
     }
 
+    // Background fetches that must not spend mobile data or Low Data Mode.
+    static let wifiSession: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 30
+        c.timeoutIntervalForResource = 600
+        c.httpAdditionalHeaders = ["User-Agent": ua]
+        c.urlCache = nil
+        c.allowsExpensiveNetworkAccess = false
+        c.allowsConstrainedNetworkAccess = false
+        return URLSession(configuration: c)
+    }()
+
     // Big lists (the whole film list is ~75 MB) go straight to a file.
-    static func download(_ query: String) async throws -> URL {
+    static func download(_ query: String, wifiOnly: Bool = false) async throws -> URL {
         guard let u = apiURL(query) else { throw ApiError.noAccount }
         var r = URLRequest(url: u)
         r.timeoutInterval = 120
-        let (f, resp) = try await session.download(for: r)
+        let (f, resp) = try await (wifiOnly ? wifiSession : session).download(for: r)
         if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
         let mine = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         try FileManager.default.moveItem(at: f, to: mine)
