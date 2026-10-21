@@ -16,6 +16,6 @@ All sources are flat in `Sources/`.
 - `Search.swift`: actor; downloads the full list once a day to a TSV index and searches it in memory.
 - `Library.swift`: favourites, Continue Watching, resume points (UserDefaults), `Epg` actor (now/next).
 - `Images.swift`: downsampled image loader, `RemoteImage`, colours, `Metrics` (all sizes derive from screen width; `compact` < 600pt = phone layout).
-- `FireApp.swift`: `AppState` (navigation path, player request), login, settings. `RootView.swift`: header + tabs, `BrowseModel`, rows. `Cards.swift`: cards and hero. `Details.swift`: film and series pages. `Player.swift`: VLC wrapper (polled every 0.5 s, not delegates), player UI, live guide.
+- `FireApp.swift`: `AppState` (navigation path, player request), login, settings. `Updater.swift`: checks GitHub releases of this repo and hands the downloaded IPA to the share sheet (same as StampCam); keep the tag `v<version>` and asset `Fire.ipa`. `RootView.swift`: header + tabs, `BrowseModel`, rows. `Cards.swift`: cards and hero. `Details.swift`: film and series pages. `Player.swift`: VLC wrapper (polled every 0.5 s, not delegates), player UI, live guide.
 
 VLC is used because AVPlayer can't play the provider's MKV/HEVC files. The account allows one connection: always `vlc.stop()` when leaving the player.

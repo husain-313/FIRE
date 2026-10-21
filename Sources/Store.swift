@@ -66,6 +66,23 @@ enum Store {
         }.value
     }
 
+    // Keeps the saved lists under [limit], oldest first; each is rewritten when it refreshes.
+    static func trim(limit: Int = 80 << 20) {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys) else { return }
+        var list = files.compactMap { f -> (URL, Date, Int)? in
+            guard let v = try? f.resourceValues(forKeys: Set(keys)) else { return nil }
+            return (f, v.contentModificationDate ?? .distantPast, v.fileSize ?? 0)
+        }
+        var total = list.reduce(0) { $0 + $1.2 }
+        guard total > limit else { return }
+        list.sort { $0.1 < $1.1 }
+        for (f, _, size) in list where total > limit {
+            try? FileManager.default.removeItem(at: f)
+            total -= size
+        }
+    }
+
     static func clear() {
         mem.removeAllObjects()
         try? FileManager.default.removeItem(at: dir)

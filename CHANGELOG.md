@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3
+- **Update from inside the app.** Settings shows your version and checks for a new one. Tap Download, then open the file with your signing app to install it.
+- **Storage stays small.** Saved channel, film and series lists are kept under 80 MB, oldest first.
+- **Refresh clears pictures too.** Refresh all lists in Settings now also clears saved posters.
+
 ## 1.2
 - **Pages fit the screen.** On iPhone the series and film pages no longer slide off the left edge, and on iPad the Play and Info buttons are no longer cut off under the big picture.
 
