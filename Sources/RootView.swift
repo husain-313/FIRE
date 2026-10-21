@@ -87,8 +87,13 @@ struct RootView: View {
         }
         .padding(.horizontal, m.pad)
         .padding(.top, 6).padding(.bottom, 8)
+        // Solid, so rows scrolling under it never mix with the tabs; a short fade below it.
         .background(
-            LinearGradient(colors: [Color.bg.opacity(0.96), Color.bg.opacity(0.75), .clear], startPoint: .top, endPoint: .bottom)
+            Color.bg.opacity(0.97)
+                .overlay(alignment: .bottom) {
+                    LinearGradient(colors: [Color.bg.opacity(0.97), .clear], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 14).offset(y: 14)
+                }
                 .ignoresSafeArea(edges: .top)
         )
     }
@@ -130,6 +135,12 @@ final class BrowseModel: ObservableObject {
         }
         cats = CatSort.sort(c, live: kind == .live)
         await pickHero()
+        // Get search ready before it is needed (on Wi-Fi), a little after the rows have loaded.
+        let k = kind
+        Task.detached(priority: .background) {
+            try? await Task.sleep(nanoseconds: UInt64(8 + k.rawValue * 20) * 1_000_000_000)
+            await Search.shared.prewarm(k)
+        }
     }
 
     // The newest thing left part way, else the first title of the first package.

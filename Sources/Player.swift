@@ -210,7 +210,8 @@ struct PlayerView: View {
                 Color.clear.contentShape(Rectangle()).ignoresSafeArea()
                     .onTapGesture(count: 2) { if !isLive { vlc.setFill(!vlc.fill, size: g.size) } }
                     .onTapGesture { if guide { withAnimation { guide = false } } else { toggleControls() } }
-                if vlc.buffering && !failed {
+                // With the controls up, the wheel takes the play button's place instead.
+                if vlc.buffering && !failed && !controls {
                     ProgressView().scaleEffect(1.6).tint(.white)
                 }
                 if failed { failedCard }
@@ -465,7 +466,12 @@ struct PlayerView: View {
             } else {
                 circle("gobackward.10", big * 0.7) { vlc.jump(-10) }
             }
-            circle(vlc.playing ? "pause.fill" : "play.fill", big) { vlc.toggle() }
+            if vlc.buffering {
+                ProgressView().scaleEffect(1.5).tint(.white)
+                    .frame(width: big, height: big).background(Color.white.opacity(0.14), in: Circle())
+            } else {
+                circle(vlc.playing ? "pause.fill" : "play.fill", big) { vlc.toggle() }
+            }
             if isLive {
                 circle("forward.end.fill", big * 0.7) { zap(1) }
             } else {

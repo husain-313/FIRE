@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1
+- **Search is ready sooner.** The lists search uses are prepared in the background on Wi-Fi, so the first search no longer waits a minute. Mobile data is never used for this.
+- **Clearer player.** While a film loads, the loading wheel takes the play button's place instead of sitting on top of it.
+- **Solid top bar.** Rows scrolling under the tabs no longer show through them.
+
 ## 1.0
 - **FIRE on iPhone and iPad.** Live TV, Movies and Series from your IPTV account, in the same orange-on-dark look as FIRE on the TV.
 - **Fits every screen.** Every iPad size and every iPhone, in portrait and landscape.

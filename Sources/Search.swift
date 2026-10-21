@@ -55,6 +55,14 @@ actor Search {
             .prefix(Search.limit).map { $0.element.1 }
     }
 
+    // Builds the index ahead of the first search, on Wi-Fi only; skipped when it is still fresh.
+    func prewarm(_ k: Kind) {
+        let f = Search.file(k)
+        let age = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Date().timeIntervalSince($0) }
+        if let age, age < DAY { return }
+        _ = build(k, wifiOnly: true)
+    }
+
     func reset() {
         index = [:]
         for k in Kind.allCases { try? FileManager.default.removeItem(at: Search.file(k)) }
@@ -69,15 +77,20 @@ actor Search {
             if let age, age > DAY { _ = build(k) }
             return true
         }
-        let ok = await build(k).value
+        // A Wi-Fi-only build running ahead fails on mobile data; then the search fetches it itself.
+        var ok = await build(k).value
+        if !ok { ok = await build(k).value }
         return ok && index[k] != nil
     }
 
-    private func build(_ k: Kind) -> Task<Bool, Never> {
+    private func build(_ k: Kind, wifiOnly: Bool = false) -> Task<Bool, Never> {
         if let t = building[k] { return t }
         let t = Task<Bool, Never> {
             let f = Search.file(k)
-            guard let tmp = try? await Api.download(Q.all(k)) else { return false }
+            guard let tmp = try? await Api.download(Q.all(k), wifiOnly: wifiOnly) else {
+                self.building[k] = nil
+                return false
+            }
             let entries: [Entry]? = await Task.detached(priority: .userInitiated) {
                 defer { try? FileManager.default.removeItem(at: tmp) }
                 guard let d = try? Data(contentsOf: tmp, options: .alwaysMapped) else { return nil }
