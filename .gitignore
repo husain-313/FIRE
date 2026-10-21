@@ -1,0 +1,7 @@
+*.xcodeproj
+*.xcworkspace
+Pods/
+Podfile.lock
+build/
+*.ipa
+Payload/
