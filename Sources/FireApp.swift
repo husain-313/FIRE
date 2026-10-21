@@ -4,6 +4,10 @@ import SwiftUI
 struct FireApp: App {
     @StateObject private var app = AppState()
 
+    init() {
+        Task.detached(priority: .background) { Store.trim() }
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -53,6 +57,7 @@ final class AppState: ObservableObject {
         Account.clear()
         Api.account = nil
         Store.clear()
+        Images.clear()
         Task { await Search.shared.reset() }
         path = []
         account = nil
@@ -174,14 +179,22 @@ struct SettingsView: View {
                     if let e = app.expiry, !e.isEmpty { LabeledContent("Expires", value: e) }
                 }
                 Section {
-                    Button(cleared ? "Lists refreshed" : "Refresh all lists") {
+                    UpdateRow()
+                } header: {
+                    Text("App · Version \(Updater.version)")
+                } footer: {
+                    Text("Downloads the new Fire.ipa. Then open it with your signing app to install it; your account and progress stay.")
+                }
+                Section {
+                    Button(cleared ? "Lists and pictures cleared" : "Refresh all lists") {
                         Store.clear()
+                        Images.clear()
                         Task { await Search.shared.reset() }
                         cleared = true
                     }
                     .disabled(cleared)
                 } footer: {
-                    Text("Channels, films and series are kept for a few hours so they open at once.")
+                    Text("Channels, films, series and posters are kept on this device so they open at once. This clears them all and loads them fresh.")
                 }
                 Section {
                     Button("Sign Out", role: .destructive) { dismiss(); app.signOut() }

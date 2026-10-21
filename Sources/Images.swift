@@ -12,13 +12,15 @@ enum Images {
 
     private static let session: URLSession = {
         let c = URLSessionConfiguration.default
-        c.urlCache = URLCache(memoryCapacity: 8 << 20, diskCapacity: 300 << 20)
+        c.urlCache = disk
         c.requestCachePolicy = .returnCacheDataElseLoad
         c.timeoutIntervalForRequest = 15
         c.httpMaximumConnectionsPerHost = 6
         c.httpAdditionalHeaders = ["User-Agent": Api.ua]
         return URLSession(configuration: c)
     }()
+
+    private static let disk = URLCache(memoryCapacity: 8 << 20, diskCapacity: 300 << 20)
 
     private static let tmdb = try! NSRegularExpression(pattern: "(image\\.tmdb\\.org/t/p/)[^/]+/")
 
@@ -27,6 +29,11 @@ enum Images {
         guard url.contains("image.tmdb.org/t/p/") else { return url }
         let size = px <= 200 ? "w185" : px <= 400 ? "w342" : px <= 800 ? "w780" : "w1280"
         return tmdb.stringByReplacingMatches(in: url, range: NSRange(url.startIndex..., in: url), withTemplate: "$1\(size)/")
+    }
+
+    static func clear() {
+        mem.removeAllObjects()
+        disk.removeAllCachedResponses()
     }
 
     static func cached(_ url: String, _ px: CGFloat) -> UIImage? {

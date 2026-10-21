@@ -65,7 +65,10 @@ actor Search {
 
     func reset() {
         index = [:]
-        for k in Kind.allCases { try? FileManager.default.removeItem(at: Search.file(k)) }
+        // Every account's index, so signing out (account already gone) still clears them.
+        let d = Search.file(.live).deletingLastPathComponent()
+        let files = (try? FileManager.default.contentsOfDirectory(at: d, includingPropertiesForKeys: nil)) ?? []
+        for f in files where f.lastPathComponent.hasPrefix("idx_") { try? FileManager.default.removeItem(at: f) }
     }
 
     private func ready(_ k: Kind) async -> Bool {
