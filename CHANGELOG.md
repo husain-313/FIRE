@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4
+- **Next episode.** While watching a series, a Next Episode button sits above the time bar.
+- **Plays on by itself.** In the last 15 seconds of an episode a card shows the next one with a countdown; it starts on its own when the episode ends, even across seasons. Tap ✕ to stop at the end instead.
+- **Brightness and volume by sliding.** In the player, slide up or down on the left half for brightness and on the right half for volume, like Netflix and Apple TV. The brightness goes back to how it was when you leave the player.
+
 ## 1.3
 - **Update from inside the app.** Settings shows your version and checks for a new one. Tap Download, then open the file with your signing app to install it.
 - **Storage stays small.** Saved channel, film and series lists are kept under 80 MB, oldest first.

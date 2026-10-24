@@ -1,3 +1,5 @@
+import AVFoundation
+import MediaPlayer
 import MobileVLCKit
 import SwiftUI
 import UIKit
@@ -172,12 +174,60 @@ struct VideoSurface: UIViewRepresentable {
     func updateUIView(_ v: UIView, context: Context) {}
 }
 
+// The iPhone's own volume. iOS only lets an app change it through the slider inside an
+// MPVolumeView, so a tiny invisible one sits in the player. While it is there iOS hides its
+// own volume popup, so [level] also follows the side buttons and the player shows the change.
+final class SystemVolume: ObservableObject {
+    @Published private(set) var level: Float = AVAudioSession.sharedInstance().outputVolume
+    let view = MPVolumeView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+    private var watch: NSKeyValueObservation?
+
+    init() {
+        watch = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
+            guard let v = change.newValue else { return }
+            DispatchQueue.main.async { self?.level = v }
+        }
+    }
+
+    func set(_ value: Float) {
+        guard let slider = view.subviews.lazy.compactMap({ $0 as? UISlider }).first else { return }
+        slider.value = min(max(value, 0), 1)
+        slider.sendActions(for: .valueChanged)
+    }
+}
+
+struct VolumeHost: UIViewRepresentable {
+    let volume: SystemVolume
+    func makeUIView(context: Context) -> MPVolumeView { volume.view }
+    func updateUIView(_ v: MPVolumeView, context: Context) {}
+}
+
+// The screen the player is on, for its brightness.
+private var currentScreen: UIScreen? {
+    (UIApplication.shared.connectedScenes.first { $0.activationState == .foregroundActive } as? UIWindowScene)?.screen
+}
+
+// A film or episode being played. An episode can hand over to the next one inside the same player.
+private struct Vod {
+    var url: URL
+    var title: String
+    var sub: String?
+    var key: String
+    var watch: Watch?
+}
+
+private struct QueuedEpisode {
+    let season: String
+    let ep: Item
+}
+
 struct PlayerView: View {
     let request: PlayRequest
     @EnvironmentObject private var lib: Library
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @StateObject private var vlc = VLC()
+    @StateObject private var volume = SystemVolume()
 
     @State private var controls = true
     @State private var hideTask: Task<Void, Never>?
@@ -199,7 +249,38 @@ struct PlayerView: View {
     @State private var now: (Prog?, Prog?) = (nil, nil)
     @State private var zapTask: Task<Void, Never>?
 
+    // Films and episodes
+    @State private var vod: Vod?
+    // Every episode of the series in order, to find the next one.
+    @State private var queue: [QueuedEpisode] = []
+    @State private var seriesBackdrop: String?
+    // Cancel on the Next Episode card: this episode ends and closes like before.
+    @State private var upNextCancelled = false
+
+    // Slide up or down: left half brightness, right half volume.
+    enum Adjust { case brightness, volume }
+    @State private var adjusting: Adjust?
+    @State private var adjustStart: Float = 0
+    @State private var shownAdjust: Adjust?
+    @State private var adjustLevel: Float = 0
+    @State private var adjustHide: Task<Void, Never>?
+    // The brightness before the player changed it, put back when the player closes.
+    @State private var savedBrightness: CGFloat?
+
     private var isLive: Bool { if case .live = request.mode { return true } else { return false } }
+
+    private var next: QueuedEpisode? {
+        guard let w = vod?.watch, w.kind == .series,
+              let i = queue.firstIndex(where: { $0.ep.sid == w.epId }), i + 1 < queue.count else { return nil }
+        return queue[i + 1]
+    }
+
+    // Seconds left while the Next Episode card shows (the last 15 seconds of an episode).
+    private var upNextLeft: Double? {
+        guard !isLive, !failed, !upNextCancelled, next != nil, vlc.length > 120 else { return nil }
+        let left = vlc.length - vlc.time
+        return left > 0 && left <= 15 ? left : nil
+    }
 
     var body: some View {
         GeometryReader { g in
@@ -207,9 +288,11 @@ struct PlayerView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 VideoSurface(vlc: vlc).ignoresSafeArea()
+                VolumeHost(volume: volume).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
                 Color.clear.contentShape(Rectangle()).ignoresSafeArea()
                     .onTapGesture(count: 2) { if !isLive { vlc.setFill(!vlc.fill, size: g.size) } }
                     .onTapGesture { if guide { withAnimation { guide = false } } else { toggleControls() } }
+                    .simultaneousGesture(adjustDrag(g.size))
                 // With the controls up, the wheel takes the play button's place instead.
                 if vlc.buffering && !failed && !controls {
                     ProgressView().scaleEffect(1.6).tint(.white)
@@ -220,6 +303,8 @@ struct PlayerView: View {
                     Image(systemName: "pause.fill").font(.system(size: 34)).foregroundColor(.white)
                         .frame(width: 84, height: 84).overlay(Circle().stroke(Color.fire, lineWidth: 3))
                 }
+                if let left = upNextLeft, let n = next, !guide { upNextCard(n, left, compact) }
+                if let a = shownAdjust { adjustIndicator(a) }
                 if guide { guidePanel(g.size, compact) }
                 if let toast {
                     Text(toast).font(.subheadline.weight(.semibold)).padding(.horizontal, 16).padding(.vertical, 10)
@@ -238,10 +323,15 @@ struct PlayerView: View {
         .onAppear(perform: start)
         .onDisappear(perform: finish)
         .onChange(of: vlc.time) { _ in periodicSave() }
+        // The side buttons change the volume too; show it, since iOS hides its own popup here.
+        .onChange(of: volume.level) { v in
+            if adjusting != .volume { showAdjust(.volume, v) }
+        }
         .onChange(of: phase) { p in
             if p == .background {
                 save()
                 vlc.pause()
+                restoreBrightness()
             } else if p == .active, !failed {
                 if isLive { play(index) } else { vlc.resume() }
             }
@@ -253,12 +343,14 @@ struct PlayerView: View {
     private func start() {
         UIApplication.shared.isIdleTimerDisabled = true
         switch request.mode {
-        case .vod(let url, _, _, let key, _):
+        case .vod(let url, let t, let s, let key, let w):
+            vod = Vod(url: url, title: t, sub: s, key: key, watch: w)
             let at = lib.resume(key)
             if at > 0 { show(toast: "Resumed at \(clock(at))") }
             hook()
             vlc.open(url, live: false, start: at)
             hideSoon()
+            if let w, w.kind == .series { loadQueue(w.id) }
         case .live(let list, let i, let c, let cat):
             channels = list
             cats = c
@@ -305,28 +397,152 @@ struct PlayerView: View {
         let delay = UInt64(min(retries, 3)) * 1_000_000_000
         Task {
             try? await Task.sleep(nanoseconds: delay)
-            switch request.mode {
-            case .live: play(index)
-            case .vod(let url, _, _, _, _):
-                let at = vlc.time > 1 ? vlc.time : lib.resume(requestKey ?? "")
+            if isLive {
+                play(index)
+            } else if let v = vod {
+                let at = vlc.time > 1 ? vlc.time : lib.resume(v.key)
                 hook()
-                vlc.open(url, live: false, start: at)
+                vlc.open(v.url, live: false, start: at)
             }
         }
     }
 
+    // The end of a film closes the player; the end of an episode plays the next one.
     private func ended() {
-        if case .vod(_, _, _, let key, let w) = request.mode {
+        if let v = vod {
             let d = max(vlc.length, 1)
-            lib.saveResume(key, pos: d, dur: d)
-            if let w { lib.update(w, pos: d, dur: d) }
+            lib.saveResume(v.key, pos: d, dur: d)
+            if let w = v.watch { lib.update(w, pos: d, dur: d) }
         }
-        close()
+        if let n = next, !upNextCancelled { playNext(n) } else { close() }
     }
 
-    private var requestKey: String? {
-        if case .vod(_, _, _, let key, _) = request.mode { return key }
-        return nil
+    // MARK: Next episode
+
+    private func loadQueue(_ seriesId: Int) {
+        Task {
+            guard let info = await Store.load("&action=get_series_info&series_id=\(seriesId)", ttl: 6 * HOUR, parseSeriesInfo) else { return }
+            queue = info.seasons.flatMap { s in s.episodes.map { QueuedEpisode(season: s.name, ep: $0) } }
+            seriesBackdrop = info.backdrop
+        }
+    }
+
+    // Plays [n] in this player: the same connection, no trip back to the series page.
+    private func playNext(_ n: QueuedEpisode) {
+        guard let v = vod, let w = v.watch, let u = Api.episode(n.ep.sid, n.ep.ext) else { close(); return }
+        save()
+        let label = "S\(n.season) E\(n.ep.num ?? "?")"
+        let key = "e:\(n.ep.sid)"
+        let nw = Watch(kind: .series, id: w.id, name: w.name, icon: w.icon, ext: n.ep.ext, epId: n.ep.sid,
+                       epLabel: label, backdrop: n.ep.icon ?? seriesBackdrop ?? w.backdrop)
+        vod = Vod(url: u, title: v.title, sub: [label, n.ep.name].filter { !$0.isEmpty }.joined(separator: "  •  "), key: key, watch: nw)
+        upNextCancelled = false
+        retries = 0
+        failed = false
+        scrub = nil
+        let at = lib.resume(key)
+        hook()
+        vlc.open(u, live: false, start: at)
+        show(toast: label)
+        controls = true
+        hideSoon()
+    }
+
+    private func upNextCard(_ n: QueuedEpisode, _ left: Double, _ compact: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Next Episode").font(.caption.weight(.heavy)).foregroundColor(.fire)
+                Spacer()
+                Button { upNextCancelled = true } label: {
+                    Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundColor(.white)
+                        .frame(width: 28, height: 28).background(Color.white.opacity(0.14), in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            Text("S\(n.season) E\(n.ep.num ?? "?")" + (n.ep.name.isEmpty ? "" : "  •  " + cleanTitle(n.ep.name)))
+                .font(.subheadline.weight(.semibold)).lineLimit(2)
+            Button { playNext(n) } label: {
+                Label("Play in \(Int(left.rounded(.up)))", systemImage: "play.fill")
+                    .font(.subheadline.weight(.bold)).foregroundColor(.black)
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(14)
+        .frame(width: compact ? 250 : 300)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .padding(.trailing, compact ? 14 : 28)
+        .padding(.bottom, controls ? (compact ? 96 : 120) : (compact ? 24 : 36))
+        .transition(.move(edge: .trailing).combined(with: .opacity))
+    }
+
+    // MARK: Brightness and volume
+
+    private func adjustDrag(_ s: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { v in
+                if guide { return }
+                if adjusting == nil {
+                    // Only clear up-or-down slides, and not from the top or bottom edge (iOS uses those).
+                    guard abs(v.translation.height) > abs(v.translation.width) * 1.3,
+                          v.startLocation.y > 50, v.startLocation.y < s.height - 50 else { return }
+                    let left = v.startLocation.x < s.width / 2
+                    adjusting = left ? .brightness : .volume
+                    if left {
+                        let now = currentScreen?.brightness ?? 0.5
+                        if savedBrightness == nil { savedBrightness = now }
+                        adjustStart = Float(now)
+                    } else {
+                        adjustStart = volume.level
+                    }
+                }
+                guard let a = adjusting else { return }
+                let value = min(max(adjustStart - Float(v.translation.height / (s.height * 0.6)), 0), 1)
+                if a == .brightness { currentScreen?.brightness = CGFloat(value) } else { volume.set(value) }
+                showAdjust(a, value)
+            }
+            .onEnded { _ in adjusting = nil }
+    }
+
+    private func showAdjust(_ a: Adjust, _ value: Float) {
+        shownAdjust = a
+        adjustLevel = value
+        adjustHide?.cancel()
+        adjustHide = Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            if Task.isCancelled { return }
+            withAnimation(.easeOut(duration: 0.25)) { shownAdjust = nil }
+        }
+    }
+
+    private func adjustIndicator(_ a: Adjust) -> some View {
+        let icon: String
+        if a == .brightness {
+            icon = adjustLevel < 0.5 ? "sun.min.fill" : "sun.max.fill"
+        } else {
+            icon = adjustLevel == 0 ? "speaker.slash.fill" : adjustLevel < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.3.fill"
+        }
+        return VStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 18, weight: .semibold)).foregroundColor(.white).frame(height: 22)
+            ZStack(alignment: .bottom) {
+                Capsule().fill(Color.white.opacity(0.25))
+                Capsule().fill(Color.white).frame(height: 140 * CGFloat(adjustLevel))
+            }
+            .frame(width: 6, height: 140)
+        }
+        .padding(.vertical, 16).padding(.horizontal, 14)
+        .background(.ultraThinMaterial, in: Capsule())
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: a == .brightness ? .leading : .trailing)
+        .padding(.horizontal, 28)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func restoreBrightness() {
+        if let b = savedBrightness { currentScreen?.brightness = b }
+        savedBrightness = nil
     }
 
     private func periodicSave() {
@@ -336,14 +552,15 @@ struct PlayerView: View {
 
     private func save() {
         lastSave = Date()
-        guard case .vod(_, _, _, let key, let w) = request.mode, vlc.length > 0, vlc.time > 0 else { return }
-        lib.saveResume(key, pos: vlc.time, dur: vlc.length)
-        if let w { lib.update(w, pos: vlc.time, dur: vlc.length) }
+        guard let v = vod, vlc.length > 0, vlc.time > 0 else { return }
+        lib.saveResume(v.key, pos: vlc.time, dur: vlc.length)
+        if let w = v.watch { lib.update(w, pos: vlc.time, dur: vlc.length) }
     }
 
     private func finish() {
         save()
         vlc.stop()
+        restoreBrightness()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -377,10 +594,8 @@ struct PlayerView: View {
     }
 
     private var title: (String, String?) {
-        switch request.mode {
-        case .vod(_, let t, let s, _, _): return (t, s)
-        case .live: return (channels.indices.contains(index) ? channels[index].name : "", nil)
-        }
+        if isLive { return (channels.indices.contains(index) ? channels[index].name : "", nil) }
+        return (vod?.title ?? "", vod?.sub)
     }
 
     private func overlay(_ compact: Bool) -> some View {
@@ -484,6 +699,18 @@ struct PlayerView: View {
         let len = max(vlc.length, 1)
         let shown = scrub ?? vlc.time
         return VStack(spacing: 6) {
+            if let n = next, upNextLeft == nil {
+                HStack {
+                    Spacer()
+                    Button { playNext(n); hideSoon() } label: {
+                        Label("Next Episode", systemImage: "forward.end.fill")
+                            .font(.footnote.weight(.bold)).foregroundColor(.white)
+                            .padding(.horizontal, 14).padding(.vertical, 9)
+                            .background(Color.white.opacity(0.16), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
             Slider(value: Binding(get: { min(shown, len) }, set: { scrub = $0; hideTask?.cancel() }), in: 0...len, onEditingChanged: { editing in
                 if !editing, let s = scrub {
                     vlc.seek(to: s)
