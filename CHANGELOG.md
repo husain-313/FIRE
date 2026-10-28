@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.5
+Everything new in FIRE on the TV (up to its 3.5), on iPhone and iPad.
+- **Big matches on the Live tab.** From a day and a half before kickoff until full time, each match of the big teams (the five big leagues, their cups and the Champions League) gets a row with the channels showing it. The guides are read on Wi-Fi only; on mobile data the last rows found stay.
+- **Big Leagues package.** beIN, Sky, DAZN, Movistar, Canal+ and the other channels that carry these leagues, in one row with an All card.
+- **LaLiga · Copa del Rey · Champions League row.** The channels showing them in the week ahead.
+- **Recent Channels.** The last eight channels watched for 5 seconds or more. Press and hold one to take it off.
+- **Previous channel.** In the player, the ↩︎ button goes back to the channel you were on before, even in another package; tap again to come back.
+- **Skip Intro.** In a series episode's first minutes. Where you settle after it is remembered, so the next episodes skip right to it.
+- **Subtitles and Sound lists.** Subtitles: Off, Arabic, English, then the rest, with the one showing ticked. Sound only shows when there is more than one track. Arabic subtitles first, else English; a film's own default in another language no longer wins. Track names drop codes like "ara".
+- **Film and series pages.** Starring and Director lines, a Trailer button (YouTube), and More Like This from the same section.
+- **Foreign titles with Arabic subtitles first.** Movies and Series open with the foreign and subtitled packages, then the platforms' own, dubbed, Arabic, and other countries' last. Search ranks copies the same way.
+- **Packages.** The button beside the search field lists every row of the tab; search it by name and open one.
+- **All card.** The first card of every package row (and of Continue Watching and Big Leagues) opens the whole package as a grid, with its own search field.
+
 ## 1.4
 - **Next episode.** While watching a series, a Next Episode button sits above the time bar.
 - **Plays on by itself.** In the last 15 seconds of an episode a card shows the next one with a countdown; it starts on its own when the episode ends, even across seasons. Tap ✕ to stop at the end instead.

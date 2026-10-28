@@ -34,11 +34,39 @@ final class Library: ObservableObject {
 
     @Published private(set) var favs: [Item] = []
     @Published private(set) var watching: [Watch] = []
+    @Published private(set) var recent: [Item] = []
 
     private init() {
         if let d = ud.data(forKey: "favs"), let v = try? JSONDecoder().decode([Item].self, from: d) { favs = v }
         if let d = ud.data(forKey: "watching"), let v = try? JSONDecoder().decode([Watch].self, from: d) { watching = v }
+        if let d = ud.data(forKey: "recent"), let v = try? JSONDecoder().decode([Item].self, from: d) { recent = v }
     }
+
+    // MARK: Recent Channels: the last eight watched for 5 seconds or more, newest first
+
+    func addRecent(_ i: Item) {
+        var plain = Item(kind: .live, sid: i.sid, name: i.name, icon: i.icon, ext: i.ext)
+        plain.num = i.num
+        recent.removeAll { $0.sid == i.sid }
+        recent.insert(plain, at: 0)
+        if recent.count > 8 { recent.removeLast(recent.count - 8) }
+        saveRecent()
+    }
+
+    func removeRecent(_ id: Int) {
+        recent.removeAll { $0.sid == id }
+        saveRecent()
+    }
+
+    private func saveRecent() {
+        if let d = try? JSONEncoder().encode(recent) { ud.set(d, forKey: "recent") }
+    }
+
+    // MARK: Skip Intro: where the intro ends in a series (seconds), learnt from the viewer
+
+    func introEnd(_ seriesId: Int) -> Double { ud.double(forKey: "intro:\(seriesId)") }
+
+    func setIntroEnd(_ seriesId: Int, _ at: Double) { ud.set(at, forKey: "intro:\(seriesId)") }
 
     // MARK: Favourites (newest first)
 

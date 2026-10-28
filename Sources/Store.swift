@@ -119,8 +119,29 @@ enum CatSort {
     }
 
     static func sort(_ list: [Cat], live: Bool) -> [Cat] {
-        list.enumerated().map { (rank($0.element.name, live), $0.offset, $0.element) }
+        list.enumerated().map { (live ? rank($0.element.name, true) : vodRank($0.element.name), $0.offset, $0.element) }
             .sorted { ($0.0, $0.1) < ($1.0, $1.1) }.map { $0.2 }
+    }
+
+    // Films and series: foreign titles with Arabic subtitles are what gets watched, so those packages
+    // come first (أفلام أجنبية…, مترجمة, MULTI-SUBS), then other subtitled ones named in Arabic (Turkish,
+    // Indian, Asian…), the platforms' own (NETFLIX, OSN+…), dubbed, Arabic, and other countries' last.
+    private static let arabicContent = re("عربي|عربيه|مصري|مصريه|خليجي|سوري|لبنان|شامي|مغرب|تونس|جزائر|ليبي|ليبيا|عراقي|يمني|أردني|اردني|فلسطين|بدوي|" +
+        "رمضان|شاهد|تود|واتش|فيو|مسرح|نجوم العرب|عادل امام|حلمي|كريم عبد|احمد عز|السقا|هنيدي|رمزي|دريد|اسلامي|" +
+        "مسيحي|برامج|ستاند اب|الجزيرة|اغاني|المشهد|بودكاست|منوع|دينية")
+    private static let dubbed = re("مدبلج|(^|[^A-Z])DUB")
+    private static let multiSubs = re("MULTI.?SUB")
+    private static let country = re("^[A-Z/]{2,5}\\s*[-|:]|TURK|GREEC|GREEK|ITALY|FRANCE|AFRICA|MALTA|JOYN|VIAPLAY|GERMAN|POLSK|ROMANIA|RUSSIA|KOREA")
+    private static let foreign = re("أجنب|اجنب")
+
+    private static func vodRank(_ name: String) -> Int {
+        let up = name.uppercased()
+        if has(dubbed, up) { return 3 }
+        if has(arabicContent, name) { return 4 }
+        if has(foreign, name) || has(multiSubs, up) { return 0 }
+        if has(arabicLetters, name) { return 1 }
+        if has(country, up) { return 5 }
+        return 2
     }
 
     private static func rank(_ name: String, _ live: Bool) -> Int {

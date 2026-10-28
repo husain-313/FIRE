@@ -7,7 +7,8 @@ import UIKit
 // VLC behind a small observable face. Its state is read twice a second rather than through
 // delegate callbacks, which keeps the Swift side simple and steady.
 final class VLC: NSObject, ObservableObject {
-    struct Track: Hashable { let id: Int32; let name: String }
+    // [lang]: 0 Arabic, 1 English, 2 anything else; [known] when the file names its language.
+    struct Track: Hashable { let id: Int32; let name: String; var lang = 2; var known = true }
 
     let mp = VLCMediaPlayer()
     @Published var time: Double = 0
@@ -90,7 +91,10 @@ final class VLC: NSObject, ObservableObject {
         func tracks(_ names: [Any]?, _ ids: [Any]?) -> [Track] {
             let n = (names as? [String]) ?? []
             let i = ((ids as? [NSNumber]) ?? []).map { $0.int32Value }
-            return zip(i, n).map { Track(id: $0.0, name: $0.1) }
+            return zip(i, n).enumerated().map { k, p in
+                let name = VLC.trackName(p.1, k)
+                return Track(id: p.0, name: name, lang: VLC.lang(p.1), known: !name.hasPrefix("Track "))
+            }
         }
         let s = tracks(mp.videoSubTitlesNames, mp.videoSubTitlesIndexes)
         let a = tracks(mp.audioTrackNames, mp.audioTrackIndexes)
@@ -98,11 +102,54 @@ final class VLC: NSObject, ObservableObject {
         if a != audios { audios = a }
         sub = mp.currentVideoSubTitleIndex
         audio = mp.currentAudioTrackIndex
+        // Subtitles: Arabic, else English. A file's own default in another language (Bosnian in one
+        // film) doesn't win: then they start off. The sound stays as the file has it.
         if !pickedSubs && s.count > 1 {
             pickedSubs = true
-            let ar = s.first { $0.id >= 0 && ($0.name.lowercased().contains("arab") || $0.name.contains("عرب") || $0.name.lowercased().contains("[ar")) }
-            if let ar, sub != ar.id { setSub(ar.id) }
+            let real = s.filter { $0.id >= 0 }
+            if let best = real.first(where: { $0.lang == 0 }) ?? real.first(where: { $0.lang == 1 }) {
+                if sub != best.id { setSub(best.id) }
+            } else if sub >= 0, real.first(where: { $0.id == sub })?.known == true {
+                setSub(-1)
+            }
         }
+    }
+
+    // Subtitles in the order the list shows them: Arabic, English, then the rest.
+    var sortedSubs: [Track] {
+        let real = subs.filter { $0.id >= 0 }
+        return real.filter { $0.lang == 0 } + real.filter { $0.lang == 1 } + real.filter { $0.lang == 2 }
+    }
+
+    private static let english = Locale(identifier: "en_US")
+
+    // "Track 1 - [Arabic]" -> "Arabic", "ara" -> "Arabic", "English - Commentary" -> "English · Commentary",
+    // else "Track 2". Bare codes like "ara" add nothing beside the language's name.
+    static func trackName(_ raw: String, _ n: Int) -> String {
+        var t = raw.replacingOccurrences(of: "^\\s*Track\\s*\\d+\\s*-?\\s*", with: "", options: [.regularExpression, .caseInsensitive])
+        t = t.replacingOccurrences(of: "[\\[\\]]", with: " ", options: .regularExpression)
+        var parts: [String] = []
+        for piece in t.components(separatedBy: " - ") {
+            var name = piece.trimmingCharacters(in: .whitespaces)
+            let low = name.lowercased()
+            if name.isEmpty || low == "und" || low == "disable" { continue }
+            if low.range(of: "^[a-z]{2,3}$", options: .regularExpression) != nil {
+                guard let full = english.localizedString(forLanguageCode: low), full.lowercased() != low else { continue }
+                name = full
+            }
+            if parts.contains(where: { $0.localizedCaseInsensitiveContains(name) }) { continue }
+            parts.removeAll { name.localizedCaseInsensitiveContains($0) }
+            parts.append(name)
+        }
+        return parts.isEmpty ? "Track \(n)" : parts.joined(separator: " · ")
+    }
+
+    static func lang(_ raw: String) -> Int {
+        let l = raw.lowercased()
+        func code(_ c: String) -> Bool { l.range(of: "(^|[^a-z])\(c)([^a-z]|$)", options: .regularExpression) != nil }
+        if l.contains("arab") || raw.contains("عرب") || code("ara") || code("ar") { return 0 }
+        if l.contains("english") || code("eng") || code("en") { return 1 }
+        return 2
     }
 
     func setSub(_ id: Int32) {
@@ -248,6 +295,10 @@ struct PlayerView: View {
     @State private var guide = false
     @State private var now: (Prog?, Prog?) = (nil, nil)
     @State private var zapTask: Task<Void, Never>?
+    // The channel on now, and the one before it (watched 5 seconds or more), even in another package.
+    private struct Tuned { let list: [Item]; let index: Int; let cat: Int?; let since: Date }
+    @State private var tuned: Tuned?
+    @State private var prevCh: Tuned?
 
     // Films and episodes
     @State private var vod: Vod?
@@ -256,6 +307,9 @@ struct PlayerView: View {
     @State private var seriesBackdrop: String?
     // Cancel on the Next Episode card: this episode ends and closes like before.
     @State private var upNextCancelled = false
+    // Skip Intro: the server has no intro marks, so the button shows in an episode's first minutes.
+    @State private var introDone = false
+    @State private var introSkippedAt: Date?
 
     // Slide up or down: left half brightness, right half volume.
     enum Adjust { case brightness, volume }
@@ -304,6 +358,7 @@ struct PlayerView: View {
                         .frame(width: 84, height: 84).overlay(Circle().stroke(Color.fire, lineWidth: 3))
                 }
                 if let left = upNextLeft, let n = next, !guide { upNextCard(n, left, compact) }
+                if showSkipIntro { skipIntroButton(compact) }
                 if let a = shownAdjust { adjustIndicator(a) }
                 if guide { guidePanel(g.size, compact) }
                 if let toast {
@@ -322,7 +377,13 @@ struct PlayerView: View {
         .persistentSystemOverlays(.hidden)
         .onAppear(perform: start)
         .onDisappear(perform: finish)
-        .onChange(of: vlc.time) { _ in periodicSave() }
+        .onChange(of: vlc.time) { t in
+            periodicSave()
+            if let sid = seriesId, !introDone, vlc.length > 600 {
+                let end = lib.introEnd(sid)
+                if t >= (end > 0 ? end : 300) { introDone = true }
+            }
+        }
         // The side buttons change the volume too; show it, since iOS hides its own popup here.
         .onChange(of: volume.level) { v in
             if adjusting != .volume { showAdjust(.volume, v) }
@@ -368,6 +429,17 @@ struct PlayerView: View {
 
     private func play(_ i: Int) {
         guard channels.indices.contains(i), let u = Api.live(channels[i].sid) else { return }
+        let ch = channels[i]
+        // Leaving a channel after 5 seconds or more makes it the previous one (zapping past one doesn't).
+        if let t = tuned, t.list.indices.contains(t.index), t.list[t.index].sid == ch.sid {
+            // The same channel again (a retry, back from the background): it keeps its time.
+        } else {
+            if let t = tuned, t.list.indices.contains(t.index), Date().timeIntervalSince(t.since) >= 5 {
+                prevCh = t
+                lib.addRecent(t.list[t.index])
+            }
+            tuned = Tuned(list: channels, index: i, cat: playCat, since: Date())
+        }
         index = i
         failed = false
         hook()
@@ -380,6 +452,22 @@ struct PlayerView: View {
         }
         controls = true
         hideSoon()
+    }
+
+    // Back to the channel before, and pressed again, back here: two channels a tap apart.
+    private func previousChannel() {
+        guard let p = prevCh, p.list.indices.contains(p.index) else {
+            show(toast: "No previous channel yet")
+            return
+        }
+        let cur = tuned
+        tuned = nil
+        channels = p.list
+        playCat = p.cat
+        shownCat = p.cat
+        shownChannels = p.cat == nil ? p.list : nil
+        play(p.index)
+        prevCh = cur
     }
 
     private func zap(_ d: Int) {
@@ -437,6 +525,8 @@ struct PlayerView: View {
                        epLabel: label, backdrop: n.ep.icon ?? seriesBackdrop ?? w.backdrop)
         vod = Vod(url: u, title: v.title, sub: [label, n.ep.name].filter { !$0.isEmpty }.joined(separator: "  •  "), key: key, watch: nw)
         upNextCancelled = false
+        introDone = false
+        introSkippedAt = nil
         retries = 0
         failed = false
         scrub = nil
@@ -476,6 +566,57 @@ struct PlayerView: View {
         .padding(.trailing, compact ? 14 : 28)
         .padding(.bottom, controls ? (compact ? 96 : 120) : (compact ? 24 : 36))
         .transition(.move(edge: .trailing).combined(with: .opacity))
+    }
+
+    // MARK: Skip intro
+
+    private var seriesId: Int? {
+        guard let w = vod?.watch, w.kind == .series else { return nil }
+        return w.id
+    }
+
+    private var showSkipIntro: Bool {
+        guard let sid = seriesId, !introDone, !failed, !guide, scrub == nil, vlc.length > 600, upNextLeft == nil else { return false }
+        let end = lib.introEnd(sid), t = vlc.time
+        return t >= 3 && (end > 0 ? t < end - 3 : t < 300)
+    }
+
+    // Skips 85 seconds, or to where this series' intro was learnt to end. Where the viewer settles
+    // after it (moving on or back within 20 seconds) is kept as the intro's end for later episodes.
+    private func skipIntro() {
+        guard let sid = seriesId else { return }
+        let end = lib.introEnd(sid)
+        let target = min(end > 0 ? end : vlc.time + 85, max(vlc.length - 1, 0))
+        vlc.seek(to: target)
+        if end <= 0 { lib.setIntroEnd(sid, target) }
+        introDone = true
+        introSkippedAt = Date()
+        hideSoon()
+    }
+
+    private func learnIntro(_ at: Double) {
+        guard let sid = seriesId, let s = introSkippedAt, Date().timeIntervalSince(s) <= 20, at <= 480 else { return }
+        lib.setIntroEnd(sid, at)
+    }
+
+    private func seek(by d: Int32) {
+        let target = vlc.time + Double(d)
+        vlc.jump(d)
+        learnIntro(target)
+    }
+
+    private func skipIntroButton(_ compact: Bool) -> some View {
+        Button(action: skipIntro) {
+            Label("Skip Intro", systemImage: "forward.fill")
+                .font(.subheadline.weight(.bold)).foregroundColor(.black)
+                .padding(.horizontal, 18).padding(.vertical, 11)
+                .background(Color.white, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .padding(.trailing, compact ? 18 : 32)
+        .padding(.bottom, controls ? (compact ? 118 : 140) : (compact ? 28 : 40))
+        .transition(.opacity)
     }
 
     // MARK: Brightness and volume
@@ -558,6 +699,10 @@ struct PlayerView: View {
     }
 
     private func finish() {
+        // The channel on when the player closes goes to the top of Recent Channels.
+        if isLive, let t = tuned, t.list.indices.contains(t.index), Date().timeIntervalSince(t.since) >= 5 {
+            lib.addRecent(t.list[t.index])
+        }
         save()
         vlc.stop()
         restoreBrightness()
@@ -635,9 +780,11 @@ struct PlayerView: View {
             }
             Spacer()
             if isLive {
+                circle("arrow.uturn.backward") { previousChannel() }
                 circle("list.bullet") { withAnimation { guide = true; loadShown() } }
             }
-            if vlc.subs.count > 1 || vlc.audios.count > 1 { tracksMenu }
+            if vlc.subs.contains(where: { $0.id >= 0 }) { subsMenu }
+            if vlc.audios.filter({ $0.id >= 0 }).count > 1 { soundMenu }
             if !isLive {
                 circle(vlc.fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
                     vlc.setFill(!vlc.fill, size: size)
@@ -647,30 +794,53 @@ struct PlayerView: View {
         .padding(.horizontal, compact ? 14 : 24).padding(.top, 10)
     }
 
-    private var tracksMenu: some View {
+    // Subtitles: Off, then Arabic, English and the rest, with the one showing ticked.
+    private var subsMenu: some View {
         Menu {
-            if vlc.subs.count > 1 {
-                Section("Subtitles") {
-                    ForEach(vlc.subs, id: \.self) { t in
-                        Button { vlc.setSub(t.id) } label: {
-                            if vlc.sub == t.id { Label(t.id < 0 ? "Off" : t.name, systemImage: "checkmark") } else { Text(t.id < 0 ? "Off" : t.name) }
-                        }
-                    }
+            Section("Subtitles") {
+                trackButton("Off", on: vlc.sub < 0) {
+                    vlc.setSub(-1)
+                    show(toast: "Subtitles off")
                 }
-            }
-            if vlc.audios.count > 1 {
-                Section("Audio") {
-                    ForEach(vlc.audios.filter { $0.id >= 0 }, id: \.self) { t in
-                        Button { vlc.setAudio(t.id) } label: {
-                            if vlc.audio == t.id { Label(t.name, systemImage: "checkmark") } else { Text(t.name) }
-                        }
+                ForEach(vlc.sortedSubs, id: \.self) { t in
+                    trackButton(t.name, on: vlc.sub == t.id) {
+                        vlc.setSub(t.id)
+                        show(toast: "Subtitles: \(t.name)")
                     }
                 }
             }
         } label: {
-            Image(systemName: "captions.bubble").font(.system(size: 18, weight: .semibold)).foregroundColor(.white)
-                .frame(width: 44, height: 44).background(Color.white.opacity(0.14), in: Circle())
+            menuIcon("captions.bubble")
         }
+    }
+
+    // Sound tracks, only when there is a choice; the file's own one plays at first.
+    private var soundMenu: some View {
+        let list = vlc.audios.filter { $0.id >= 0 }
+        return Menu {
+            Section("Sound") {
+                ForEach(Array(list.enumerated()), id: \.element) { n, t in
+                    trackButton(t.name, on: vlc.audio == t.id) {
+                        vlc.setAudio(t.id)
+                        show(toast: "Sound: \(t.name)  (\(n + 1)/\(list.count))")
+                    }
+                }
+            }
+        } label: {
+            menuIcon("speaker.wave.2")
+        }
+    }
+
+    @ViewBuilder
+    private func trackButton(_ name: String, on: Bool, _ pick: @escaping () -> Void) -> some View {
+        Button(action: { pick(); hideSoon() }) {
+            if on { Label(name, systemImage: "checkmark") } else { Text(name) }
+        }
+    }
+
+    private func menuIcon(_ icon: String) -> some View {
+        Image(systemName: icon).font(.system(size: 18, weight: .semibold)).foregroundColor(.white)
+            .frame(width: 44, height: 44).background(Color.white.opacity(0.14), in: Circle())
     }
 
     private func centerButtons(_ compact: Bool) -> some View {
@@ -679,7 +849,7 @@ struct PlayerView: View {
             if isLive {
                 circle("backward.end.fill", big * 0.7) { zap(-1) }
             } else {
-                circle("gobackward.10", big * 0.7) { vlc.jump(-10) }
+                circle("gobackward.10", big * 0.7) { seek(by: -10) }
             }
             if vlc.buffering {
                 ProgressView().scaleEffect(1.5).tint(.white)
@@ -690,7 +860,7 @@ struct PlayerView: View {
             if isLive {
                 circle("forward.end.fill", big * 0.7) { zap(1) }
             } else {
-                circle("goforward.10", big * 0.7) { vlc.jump(10) }
+                circle("goforward.10", big * 0.7) { seek(by: 10) }
             }
         }
     }
@@ -714,6 +884,7 @@ struct PlayerView: View {
             Slider(value: Binding(get: { min(shown, len) }, set: { scrub = $0; hideTask?.cancel() }), in: 0...len, onEditingChanged: { editing in
                 if !editing, let s = scrub {
                     vlc.seek(to: s)
+                    learnIntro(s)
                     scrub = nil
                     hideSoon()
                 }

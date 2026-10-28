@@ -77,7 +77,8 @@ struct Card: View {
             Image(systemName: "play.circle.fill").font(.system(size: 34)).foregroundColor(.white.opacity(0.9))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: m.wide, height: m.wideH)
+        .frame(width: flexible ? nil : m.wide, height: flexible ? nil : m.wideH)
+        .aspectRatio(16 / 9, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .contentShape(Rectangle())
     }

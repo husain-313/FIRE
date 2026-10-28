@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-FIRE for iPhone and iPad: a SwiftUI Xtream IPTV player (iOS 16+, `TARGETED_DEVICE_FAMILY` 1,2, all orientations, always dark). It mirrors the Android TV app in `D:\ai\fire` (same logic for category sorting, Arabic-first search, name tags, resume rules); keep the two in step when behaviour changes.
+FIRE for iPhone and iPad: a SwiftUI Xtream IPTV player (iOS 16+, `TARGETED_DEVICE_FAMILY` 1,2, all orientations, always dark). It mirrors the Android TV app (`husain-313/FIRE-TV`, `D:\ai\fire`; iOS 1.5 matches TV 3.5) (same logic for category sorting, Arabic-first search, name tags, resume rules); keep the two in step when behaviour changes.
 
 ## Building
 
@@ -16,6 +16,6 @@ All sources are flat in `Sources/`.
 - `Search.swift`: actor; downloads the full list once a day to a TSV index and searches it in memory.
 - `Library.swift`: favourites, Continue Watching, resume points (UserDefaults), `Epg` actor (now/next).
 - `Images.swift`: downsampled image loader, `RemoteImage`, colours, `Metrics` (all sizes derive from screen width; `compact` < 600pt = phone layout).
-- `FireApp.swift`: `AppState` (navigation path, player request), login, settings. `Updater.swift`: checks GitHub releases of this repo and hands the downloaded IPA to the share sheet (same as StampCam); keep the tag `v<version>` and asset `Fire.ipa`. `RootView.swift`: header + tabs, `BrowseModel`, rows. `Cards.swift`: cards and hero. `Details.swift`: film and series pages. `Player.swift`: VLC wrapper (polled every 0.5 s, not delegates), player UI, live guide, next episode (the player loads the series info and hands over to the next episode itself), slide for brightness (left) and system volume (right, through a hidden MPVolumeView).
+- `FireApp.swift`: `AppState` (navigation path, player request), login, settings. `Updater.swift`: checks GitHub releases of this repo and hands the downloaded IPA to the share sheet (same as StampCam); keep the tag `v<version>` and asset `Fire.ipa`. `RootView.swift`: header + tabs, `BrowseModel`, rows. `Cards.swift`: cards and hero. `Details.swift`: film and series pages. `Sports.swift`: `Matches` (ESPN fixtures of the big teams, the guide pass that finds the channels showing each match, Wi-Fi only; the Big Leagues package from fixed package ids) and `Sports`, what the Live tab shows of it. `Packages.swift`: `PackageRef` (any row opened whole as a grid), `AllCard`, `PackageView`, the Packages list. `Player.swift`: VLC wrapper (polled every 0.5 s, not delegates), player UI, live guide, next episode (the player loads the series info and hands over to the next episode itself), slide for brightness (left) and system volume (right, through a hidden MPVolumeView), previous channel (5 s rule, also feeds Recent Channels), Skip Intro (85 s, learnt per series in `Library`), subtitle and sound lists.
 
 VLC is used because AVPlayer can't play the provider's MKV/HEVC files. The account allows one connection: always `vlc.stop()` when leaving the player.

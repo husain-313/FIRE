@@ -28,13 +28,17 @@ struct Item: Codable, Hashable, Identifiable {
     var id: String { "\(kind.rawValue):\(sid)" }
 }
 
-// Details shown on a film's page.
+// Details shown on a film's page. [trailer] is a YouTube id; [catId] is the section the
+// title is in, for More Like This.
 struct Info {
     var backdrop: String?
     var poster: String?
     var plot: String?
     var meta: String
-    var trailer: String?
+    var trailer: String? = nil
+    var cast: String? = nil
+    var director: String? = nil
+    var catId: String? = nil
 }
 
 struct Prog: Hashable {
@@ -66,6 +70,10 @@ struct SeriesInfo {
     var cover: String?
     var backdrop: String?
     var seasons: [Season]
+    var cast: String? = nil
+    var director: String? = nil
+    var trailer: String? = nil
+    var catId: String? = nil
 }
 
 // MARK: - Lenient values
@@ -183,9 +191,31 @@ func parseVodInfo(_ d: Data) -> Info? {
     guard let o = json(d) as? [String: Any], let i = o["info"] as? [String: Any] else { return nil }
     let plot = nonEmpty(str(i["plot"])) ?? nonEmpty(str(i["description"]))
     let poster = http(str(i["cover_big"])) ?? http(str(i["movie_image"]))
+    // Some panels put the minutes in duration_secs; "02:22:00" in duration is the real length.
+    let secs = max(int(i["duration_secs"]) ?? 0, hms(str(i["duration"])))
+    let data = o["movie_data"] as? [String: Any]
     return Info(backdrop: http(firstStr(i["backdrop_path"])) ?? poster, poster: poster, plot: plot,
-                meta: metaLine(year: str(i["releasedate"]), rating: str(i["rating"]), secs: int(i["duration_secs"]) ?? 0, genre: str(i["genre"])),
-                trailer: nonEmpty(str(i["youtube_trailer"])))
+                meta: metaLine(year: str(i["releasedate"]), rating: str(i["rating"]), secs: secs, genre: str(i["genre"])),
+                trailer: trailerId(str(i["youtube_trailer"])),
+                cast: credit(str(i["cast"])) ?? credit(str(i["actors"])), director: credit(str(i["director"])),
+                catId: nonEmpty(str(data?["category_id"])))
+}
+
+private func hms(_ s: String?) -> Int {
+    let p = (s ?? "").trimmingCharacters(in: .whitespaces).split(separator: ":").compactMap { Int($0) }
+    return p.count == 3 ? p[0] * 3600 + p[1] * 60 + p[2] : 0
+}
+
+private func credit(_ s: String?) -> String? {
+    nonEmpty(s?.trimmingCharacters(in: CharacterSet(charactersIn: ", ")))
+}
+
+// Panels send the trailer as a bare YouTube id or as a full link.
+func trailerId(_ s: String?) -> String? {
+    guard let t = nonEmpty(s) else { return nil }
+    let re = try! NSRegularExpression(pattern: "(?:v=|youtu\\.be/|embed/)([A-Za-z0-9_-]{11})")
+    if let m = re.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)), let r = Range(m.range(at: 1), in: t) { return String(t[r]) }
+    return t.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil ? t : nil
 }
 
 // "04/11/2026"
@@ -234,7 +264,9 @@ func parseSeriesInfo(_ d: Data) -> SeriesInfo? {
         .map { Season(name: $0.key, episodes: $0.value.sorted { (Int($0.num ?? "") ?? 0) < (Int($1.num ?? "") ?? 0) }) }
     return SeriesInfo(plot: nonEmpty(str(i["plot"])),
                       meta: metaLine(year: str(i["releaseDate"] ?? i["release_date"]), rating: str(i["rating"]), secs: 0, genre: str(i["genre"])),
-                      cover: http(str(i["cover"])), backdrop: http(firstStr(i["backdrop_path"])), seasons: sorted)
+                      cover: http(str(i["cover"])), backdrop: http(firstStr(i["backdrop_path"])), seasons: sorted,
+                      cast: credit(str(i["cast"])), director: credit(str(i["director"])),
+                      trailer: trailerId(str(i["youtube_trailer"])), catId: nonEmpty(str(i["category_id"])))
 }
 
 // Calls [each] for every object of a big top-level JSON array without building the whole

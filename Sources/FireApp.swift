@@ -19,6 +19,7 @@ struct FireApp: App {
             }
             .environmentObject(app)
             .environmentObject(Library.shared)
+            .environmentObject(Sports.shared)
             .preferredColorScheme(.dark)
             .tint(.fire)
         }
@@ -28,6 +29,7 @@ struct FireApp: App {
 enum Route: Hashable {
     case movie(Item)
     case series(Item)
+    case package(PackageRef)
 }
 
 struct PlayRequest: Identifiable {
@@ -46,6 +48,8 @@ final class AppState: ObservableObject {
     @Published var path: [Route] = []
     @Published var playing: PlayRequest?
     @Published var expiry: String?
+    // The Live packages in the order the tab shows them, for the channel guide.
+    static var liveCats: [Cat] = []
 
     func signIn(_ a: Account) {
         a.save()
@@ -59,6 +63,7 @@ final class AppState: ObservableObject {
         Store.clear()
         Images.clear()
         Task { await Search.shared.reset() }
+        Sports.shared.clear()
         path = []
         account = nil
     }
@@ -190,6 +195,8 @@ struct SettingsView: View {
                         Store.clear()
                         Images.clear()
                         Task { await Search.shared.reset() }
+                        Sports.shared.clear()
+                        Sports.shared.refresh()
                         cleared = true
                     }
                     .disabled(cleared)

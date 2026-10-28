@@ -73,11 +73,11 @@ enum Api {
     static func movie(_ id: Int, _ ext: String?) -> URL? { stream("movie", id, ext ?? "mp4") }
     static func episode(_ id: Int, _ ext: String?) -> URL? { stream("series", id, ext ?? "mp4") }
 
-    static func data(_ query: String, account a: Account? = account, timeout: TimeInterval = 30) async throws -> Data {
+    static func data(_ query: String, account a: Account? = account, timeout: TimeInterval = 30, wifiOnly: Bool = false) async throws -> Data {
         guard let u = apiURL(query, account: a) else { throw ApiError.noAccount }
         var r = URLRequest(url: u)
         r.timeoutInterval = timeout
-        let (d, resp) = try await session.data(for: r)
+        let (d, resp) = try await (wifiOnly ? wifiSession : session).data(for: r)
         if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
         return d
     }

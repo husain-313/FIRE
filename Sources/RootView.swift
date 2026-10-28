@@ -7,6 +7,7 @@ struct RootView: View {
     @StateObject private var series = BrowseModel(.series)
     @State private var tab = Kind.live
     @State private var settings = false
+    @Environment(\.scenePhase) private var phase
 
     var body: some View {
         GeometryReader { g in
@@ -28,6 +29,7 @@ struct RootView: View {
                     switch r {
                     case .movie(let it): MovieView(item: it)
                     case .series(let it): SeriesView(item: it)
+                    case .package(let r): PackageView(ref: r)
                     }
                 }
             }
@@ -38,8 +40,11 @@ struct RootView: View {
         }
         .sheet(isPresented: $settings) { SettingsView() }
         .task {
+            Sports.shared.refresh()
             app.expiry = await Store.load("", ttl: 6 * HOUR, parseExpiry)
         }
+        // Back in the app: the match rows look again (a match may have come into the window).
+        .onChange(of: phase) { p in if p == .active { Sports.shared.refresh() } }
     }
 
     private func model(_ k: Kind) -> BrowseModel {
@@ -134,6 +139,7 @@ final class BrowseModel: ObservableObject {
             return
         }
         cats = CatSort.sort(c, live: kind == .live)
+        if kind == .live, let cats { AppState.liveCats = cats }
         await pickHero()
         // Get search ready before it is needed (on Wi-Fi), a little after the rows have loaded.
         let k = kind
@@ -199,6 +205,8 @@ struct BrowseView: View {
     let top: CGFloat
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var lib: Library
+    @EnvironmentObject private var sports: Sports
+    @State private var packages = false
     @Environment(\.metrics) private var m
     @FocusState private var searchFocused: Bool
 
@@ -212,7 +220,11 @@ struct BrowseView: View {
                     } else {
                         Color.clear.frame(height: top + 8)
                     }
-                    searchField
+                    HStack(spacing: 10) {
+                        searchField
+                        packagesButton
+                    }
+                    .padding(.horizontal, m.pad)
                     if model.query.trimmingCharacters(in: .whitespaces).count >= 2 {
                         results
                     } else {
@@ -225,6 +237,9 @@ struct BrowseView: View {
             .onChange(of: model.scrollTop) { _ in withAnimation { proxy.scrollTo("top", anchor: .top) } }
         }
         .onAppear { model.start() }
+        .sheet(isPresented: $packages) {
+            PackagesSheet(rows: rows) { r in app.path.append(.package(r)) }
+        }
     }
 
     private var searchField: some View {
@@ -244,7 +259,68 @@ struct BrowseView: View {
         .padding(.horizontal, 16).frame(height: 48)
         .background(Color.white.opacity(0.08), in: Capsule())
         .overlay(Capsule().stroke(searchFocused ? Color.fire : Color.white.opacity(0.12), lineWidth: searchFocused ? 2 : 1))
-        .padding(.horizontal, m.pad)
+    }
+
+    // Packages: every row of this tab in a list to search and open.
+    private var packagesButton: some View {
+        Button { packages = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "square.grid.2x2")
+                if !m.compact { Text("Packages") }
+            }
+            .font(.system(size: 16, weight: .semibold)).foregroundColor(.white)
+            .padding(.horizontal, m.compact ? 0 : 18)
+            .frame(minWidth: 48, minHeight: 48)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(rows.isEmpty)
+    }
+
+    private func ref(_ key: String, _ title: String) -> PackageRef { PackageRef(kind: model.kind, key: key, title: title) }
+
+    // Every row of the tab, in the order they show.
+    private var rows: [PackageRef] {
+        var out: [PackageRef] = []
+        if model.kind == .live {
+            out += sports.shown.map { ref("m:" + $0.id, Sports.title($0.game)) }
+            if !sports.big.isEmpty { out.append(ref("big", Self.bigTitle)) }
+            if !sports.football.isEmpty { out.append(ref("football", Self.footballTitle)) }
+            if !lib.recent.isEmpty { out.append(ref("recent", "Recent Channels")) }
+        } else if !lib.watchList(model.kind).isEmpty {
+            out.append(ref("cw", "Continue Watching"))
+        }
+        if !lib.favList(model.kind).isEmpty { out.append(ref("fav", model.kind == .live ? "Favorite Channels" : "My List")) }
+        out += (model.cats ?? []).map { ref("c:" + $0.id, $0.name) }
+        return out
+    }
+
+    static let bigTitle = "⚽  Big Leagues"
+    static let footballTitle = "⚽  LaLiga  ·  Copa del Rey  ·  Champions League"
+
+    private func openRow(_ key: String, _ title: String) { app.path.append(.package(ref(key, title))) }
+
+    // A row of channels made here (matches, Big Leagues…): its own channels beside the picture.
+    @ViewBuilder
+    private func channelRail(_ title: String, _ list: [Item], all key: String? = nil, recent: Bool = false) -> some View {
+        RailShell(title: title) {
+            if let key {
+                AllCard(count: list.count, style: .logo).onTapGesture { openRow(key, title) }
+            }
+            ForEach(Array(list.enumerated()), id: \.offset) { _, it in
+                Card(item: it, style: .logo)
+                    .onTapGesture { app.open(it, rail: list, cats: [], cat: nil) }
+                    .contextMenu {
+                        if recent {
+                            Button(role: .destructive) { lib.removeRecent(it.sid) } label: {
+                                Label("Remove from Recent Channels", systemImage: "xmark")
+                            }
+                        }
+                        FavButton(item: it)
+                    }
+            }
+        }
     }
 
     @ViewBuilder
@@ -270,10 +346,18 @@ struct BrowseView: View {
 
     @ViewBuilder
     private var rails: some View {
+        if model.kind == .live {
+            // The big teams' matches from a day and a half before kickoff until full time.
+            ForEach(sports.shown) { r in channelRail(Sports.title(r.game), r.channels) }
+            if !sports.big.isEmpty { channelRail(Self.bigTitle, sports.big, all: "big") }
+            if !sports.football.isEmpty { channelRail(Self.footballTitle, sports.football) }
+            if !lib.recent.isEmpty { channelRail("Recent Channels", lib.recent, recent: true) }
+        }
         if model.kind != .live {
             let cw = lib.watchList(model.kind)
             if !cw.isEmpty {
                 RailShell(title: "Continue Watching") {
+                    AllCard(count: cw.count, style: .wide).onTapGesture { openRow("cw", "Continue Watching") }
                     ForEach(cw, id: \.self) { w in
                         Card(item: w.item, style: .wide)
                             .onTapGesture { app.resumeWatch(w) }
@@ -359,6 +443,8 @@ struct CatRail: View {
                 if items.isEmpty {
                     Text("Empty").foregroundColor(.soft).frame(height: 60)
                 } else {
+                    AllCard(count: items.count, style: kind == .live ? .logo : .poster)
+                        .onTapGesture { app.path.append(.package(PackageRef(kind: kind, key: "c:" + cat.id, title: cat.name))) }
                     ForEach(items) { it in
                         Card(item: it, style: kind == .live ? .logo : .poster)
                             .onTapGesture { app.open(it, rail: items, cats: cats, cat: index) }

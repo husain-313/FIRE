@@ -34,6 +34,71 @@ private struct PillButton: View {
     }
 }
 
+// "Starring: …" (the first five names) and "Director: …" under the story.
+private struct Credits: View {
+    let cast: String?
+    let director: String?
+
+    var body: some View {
+        let names = cast?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.prefix(5).joined(separator: ", ")
+        VStack(alignment: .leading, spacing: 4) {
+            if let names, !names.isEmpty { line("Starring", names) }
+            if let director { line("Director", director) }
+        }
+        .frame(maxWidth: 720, alignment: .leading)
+    }
+
+    private func line(_ label: String, _ value: String) -> some View {
+        (Text(label + ": ").foregroundColor(.soft) + Text(value).foregroundColor(.white.opacity(0.85)))
+            .font(.footnote).lineLimit(2)
+    }
+}
+
+// Opens the trailer in the YouTube app when it is there, else in Safari.
+private func openTrailer(_ id: String) {
+    guard let app = URL(string: "youtube://watch?v=\(id)"), let web = URL(string: "https://www.youtube.com/watch?v=\(id)") else { return }
+    UIApplication.shared.open(app, options: [:]) { ok in
+        if !ok { UIApplication.shared.open(web) }
+    }
+}
+
+// Other titles from the same section, as the server lists them; shown once loaded.
+private struct MoreLikeThis: View {
+    let kind: Kind
+    let catId: String
+    let selfId: Int
+    @EnvironmentObject private var app: AppState
+    @Environment(\.metrics) private var m
+    @State private var items: [Item] = []
+
+    var body: some View {
+        Group {
+            if !items.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("More Like This").font(.system(size: m.compact ? 18 : 21, weight: .bold))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(alignment: .top, spacing: m.gap) {
+                            ForEach(items) { it in
+                                Card(item: it, style: .poster)
+                                    .onTapGesture { app.path.append(kind == .movie ? .movie(it) : .series(it)) }
+                                    .contextMenu { FavButton(item: it) }
+                            }
+                        }
+                        .padding(.horizontal, m.pad)
+                    }
+                    .padding(.horizontal, -m.pad)
+                }
+                .padding(.top, 18)
+            }
+        }
+        .task(id: catId) {
+            let k = kind
+            let all = await Store.load(Q.streams(k, Cat(id: catId, name: "")), ttl: 6 * HOUR) { parseItems(k, $0) } ?? []
+            items = Array(all.filter { $0.sid != selfId }.prefix(15))
+        }
+    }
+}
+
 private extension View {
     // A see-through bar: the page shows under it and the back button stays.
     func detailChrome() -> some View {
@@ -86,11 +151,15 @@ struct MovieView: View {
                         } else if info == nil {
                             ProgressView().padding(.top, 8)
                         }
+                        if let info { Credits(cast: info.cast, director: info.director) }
                     }
                 }
                 .padding(.horizontal, m.pad)
                 .offset(y: m.compact ? -40 : -m.poster * 1.2)
                 .padding(.bottom, m.compact ? -20 : -m.poster * 1.1)
+                if let c = info?.catId {
+                    MoreLikeThis(kind: .movie, catId: c, selfId: item.sid).padding(.horizontal, m.pad)
+                }
             }
             .padding(.bottom, 40)
         }
@@ -123,6 +192,9 @@ struct MovieView: View {
             }
         }
         PillButton(title: lib.isFav(item) ? "In My List" : "My List", icon: lib.isFav(item) ? "checkmark" : "plus") { lib.toggleFav(item) }
+        if let t = info?.trailer {
+            PillButton(title: "Trailer", icon: "film") { openTrailer(t) }
+        }
     }
 }
 
@@ -147,20 +219,18 @@ struct SeriesView: View {
                             Text(meta).font(.subheadline.weight(.semibold)).foregroundColor(.fireLight)
                         }
                     }
-                    HStack(spacing: 12) {
-                        if let t = target() {
-                            PillButton(title: "\(t.resume ? "Resume" : "Play") S\(t.season) E\(t.ep.num ?? "1")", icon: "play.fill", primary: true) {
-                                play(t.ep, t.season)
-                            }
-                        }
-                        PillButton(title: lib.isFav(item) ? "In My List" : "My List", icon: lib.isFav(item) ? "checkmark" : "plus") { lib.toggleFav(item) }
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) { buttons }
+                        VStack(alignment: .leading, spacing: 10) { buttons }
                     }
                     if let plot = info?.plot ?? item.plot {
                         Text(plot).foregroundColor(.white.opacity(0.85)).frame(maxWidth: 720, alignment: .leading)
                     }
+                    if let info { Credits(cast: info.cast, director: info.director) }
                     if let info {
                         seasons(info)
                         episodes(info)
+                        if let c = info.catId { MoreLikeThis(kind: .series, catId: c, selfId: item.sid) }
                     } else if failed {
                         Text("Can't load this series right now.").foregroundColor(.soft).padding(.vertical, 30)
                     } else {
@@ -179,6 +249,19 @@ struct SeriesView: View {
                 failed = info == nil
                 if season == nil { season = target()?.season ?? info?.seasons.first?.name }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
+        if let t = target() {
+            PillButton(title: "\(t.resume ? "Resume" : "Play") S\(t.season) E\(t.ep.num ?? "1")", icon: "play.fill", primary: true) {
+                play(t.ep, t.season)
+            }
+        }
+        PillButton(title: lib.isFav(item) ? "In My List" : "My List", icon: lib.isFav(item) ? "checkmark" : "plus") { lib.toggleFav(item) }
+        if let t = info?.trailer {
+            PillButton(title: "Trailer", icon: "film") { openTrailer(t) }
         }
     }
 

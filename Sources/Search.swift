@@ -6,7 +6,8 @@ actor Search {
     static let shared = Search()
     private static let limit = 300
 
-    private struct Entry { let norm: String; let item: Item; let arabic: Bool; let quality: Int }
+    // [first] is the language rank: Arabic first for channels, Arabic-subtitled first for films and series.
+    private struct Entry { let norm: String; let item: Item; let first: Int; let quality: Int }
 
     private var index: [Kind: [Entry]] = [:]
     private var building: [Kind: Task<Bool, Never>] = [:]
@@ -47,7 +48,7 @@ actor Search {
         guard let first = words.first else { return [] }
         var found: [(Int, Item)] = []
         for e in list where words.allSatisfy({ e.norm.contains($0) }) {
-            let rank = (e.arabic ? 0 : 100) + e.quality * 2 + (Search.wordStart(e.norm, first) ? 0 : 1)
+            let rank = e.first * 100 + e.quality * 2 + (Search.wordStart(e.norm, first) ? 0 : 1)
             found.append((rank, e.item))
             if found.count >= 3000 { break }
         }
@@ -123,7 +124,7 @@ actor Search {
             let name = String(p[1])
             let it = Item(kind: k, sid: id, name: name, icon: p[2].isEmpty ? nil : String(p[2]), ext: p[3].isEmpty ? nil : String(p[3]))
             let n = norm(name)
-            out.append(Entry(norm: n, item: it, arabic: isArabic(n), quality: quality(n)))
+            out.append(Entry(norm: n, item: it, first: k == .live ? (isArabic(n) ? 0 : 1) : vodRank(n), quality: quality(n)))
         }
         return out
     }
@@ -154,6 +155,23 @@ actor Search {
                                                 "jo", "om", "bh", "ye", "ma", "dz", "tn", "ly", "ps", "sd", "mbc", "osn", "bein"]
     private static let otherLang: Set<String> = ["en", "de", "fr", "gr", "ir", "fa", "al", "es", "pt", "nl", "sc", "se", "in", "tr", "it", "ru", "pl", "ro",
                                                  "ph", "ku", "bg", "il", "la", "so", "ur", "pk", "cn", "jp", "kr", "us", "uk"]
+
+    // Films and series: foreign copies with Arabic subtitles first ("AR-SUBS - Dune", "4K-AR - The
+    // Batman"), then other foreign copies, dubbed ones ("AR-DUB - …"), Arabic titles, and copies
+    // marked for another language ("FR - …") last.
+    private static func vodRank(_ n: String) -> Int {
+        var tags: [String] = []
+        var title = Substring(n)
+        if let r = n.range(of: " - "), (1...16).contains(n.distance(from: n.startIndex, to: r.lowerBound)) {
+            tags = n[..<r.lowerBound].split { "- |:".contains($0) }.map(String.init)
+            title = n[r.upperBound...]
+        }
+        if tags.contains(where: { $0.hasPrefix("dub") }) { return 2 }
+        if title.unicodeScalars.contains(where: { (0x0600...0x06FF).contains($0.value) }) { return 3 }
+        if tags.contains(where: { otherLang.contains($0) && $0 != "en" }) { return 4 }
+        if tags.contains("ar") || tags.contains("subs") || tags.contains("sub") { return 0 }
+        return 1
+    }
 
     // A provider prefix decides when there is one: "AR-SUBS - …", "4K-AR - …", "AR: …" are Arabic,
     // "KU-S - Avatar" is Kurdish even though Kurdish (like Persian) uses Arabic letters.
