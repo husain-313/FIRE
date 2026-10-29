@@ -92,17 +92,22 @@ final class Library: ObservableObject {
 
     func watch(_ k: Kind, _ id: Int) -> Watch? { watching.first { $0.kind == k && $0.id == id } }
 
+    // Margins shrink with the length, so short clips (the AI series run a minute or two) count too;
+    // fixed 1-/2-minute edges overlap for them and left them out of Continue Watching and resume.
+    private func marks(_ dur: Double) -> (begun: Double, nearEnd: Double) { (min(60, dur / 20), min(120, dur / 10)) }
+
     // Kept while part way; dropped once finished (or barely started).
     func update(_ w: Watch, pos: Double, dur: Double) {
         guard dur > 0 else { return }
-        if pos > 60 && pos < dur - 120 {
+        let (begun, nearEnd) = marks(dur)
+        if pos > begun && pos < dur - nearEnd {
             var n = w
             n.pos = pos
             n.dur = dur
             n.time = Date()
             watching.removeAll { $0.kind == w.kind && $0.id == w.id }
             watching.insert(n, at: 0)
-        } else if pos >= dur - 120 {
+        } else if pos >= dur - nearEnd {
             watching.removeAll { $0.kind == w.kind && $0.id == w.id }
         } else { return }
         saveWatching()
@@ -125,10 +130,11 @@ final class Library: ObservableObject {
     // Also keeps the length (for progress bars) and remembers what was watched to the end.
     func saveResume(_ key: String, pos: Double, dur: Double) {
         guard dur > 0 else { return }
-        if pos > 60 && pos < dur - 120 {
+        let (begun, nearEnd) = marks(dur)
+        if pos > begun && pos < dur - nearEnd {
             ud.set(pos, forKey: "r:" + key)
             ud.set(dur, forKey: "d:" + key)
-        } else if pos >= dur - 120 {
+        } else if pos >= dur - nearEnd {
             clearResume(key)
             ud.set(true, forKey: "done:" + key)
         } else {

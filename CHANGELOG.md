@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6
+- **Picture size.** Double-tap a film or episode, or tap the size button, to step through Original size, Fill screen, and Stretch — handy for phone-shot vertical clips (the AI series) that would otherwise sit small in the middle.
+- **Short clips are remembered.** Very short episodes (a minute or two, like the AI series) now stay in Continue Watching and keep their place, where before they were always dropped.
+- **Remove several at once.** Long-press a card in Continue Watching or Recent Channels and choose Select Multiple to tick several, use Select All, and delete them together instead of one by one.
+
 ## 1.5
 Everything new in FIRE on the TV (up to its 3.5), on iPhone and iPad.
 - **Big matches on the Live tab.** From a day and a half before kickoff until full time, each match of the big teams (the five big leagues, their cups and the Champions League) gets a row with the channels showing it. The guides are read on Wi-Fi only; on mobile data the last rows found stay.

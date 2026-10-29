@@ -19,7 +19,8 @@ final class VLC: NSObject, ObservableObject {
     @Published var audios: [Track] = []
     @Published var sub: Int32 = -1
     @Published var audio: Int32 = -1
-    @Published var fill = false
+    // The picture's size: 0 original (whole picture), 1 fill (crop to the screen), 2 stretch.
+    @Published var zoom = 0
 
     var onEnd: (() -> Void)?
     var onError: (() -> Void)?
@@ -186,14 +187,16 @@ final class VLC: NSObject, ObservableObject {
         stillSince = Date()
     }
 
-    // Fill crops the picture to the screen; fit shows all of it.
-    func setFill(_ on: Bool, size: CGSize) {
-        fill = on
-        if on, size.width > 0, size.height > 0 {
-            mp.videoCropGeometry = strdup("\(Int(size.width)):\(Int(size.height))")
-        } else {
-            mp.videoCropGeometry = nil
-        }
+    // Original shows the whole picture; fill crops it to the screen; stretch forces the screen's
+    // shape onto it. Portrait clips (the AI series) can then be filled or stretched to the screen.
+    func setZoom(_ mode: Int, size: CGSize) {
+        zoom = mode
+        mp.videoCropGeometry = nil
+        mp.videoAspectRatio = nil
+        guard size.width > 0, size.height > 0 else { return }
+        let g = "\(Int(size.width)):\(Int(size.height))"
+        if mode == 1 { mp.videoCropGeometry = strdup(g) }
+        else if mode == 2 { mp.videoAspectRatio = strdup(g) }
     }
 
     deinit { timer?.invalidate() }
@@ -344,7 +347,13 @@ struct PlayerView: View {
                 VideoSurface(vlc: vlc).ignoresSafeArea()
                 VolumeHost(volume: volume).frame(width: 1, height: 1).opacity(0.01).allowsHitTesting(false)
                 Color.clear.contentShape(Rectangle()).ignoresSafeArea()
-                    .onTapGesture(count: 2) { if !isLive { vlc.setFill(!vlc.fill, size: g.size) } }
+                    .onTapGesture(count: 2) {
+                        if !isLive {
+                            let next = (vlc.zoom + 1) % 3
+                            vlc.setZoom(next, size: g.size)
+                            show(toast: next == 1 ? "Fill screen" : next == 2 ? "Stretch" : "Original size")
+                        }
+                    }
                     .onTapGesture { if guide { withAnimation { guide = false } } else { toggleControls() } }
                     .simultaneousGesture(adjustDrag(g.size))
                 // With the controls up, the wheel takes the play button's place instead.
@@ -370,7 +379,7 @@ struct PlayerView: View {
             .onAppear { size = g.size }
             .onChange(of: g.size) { s in
                 size = s
-                if vlc.fill { vlc.setFill(true, size: s) }
+                if vlc.zoom != 0 { vlc.setZoom(vlc.zoom, size: s) }
             }
         }
         .statusBarHidden(!controls)
@@ -786,8 +795,10 @@ struct PlayerView: View {
             if vlc.subs.contains(where: { $0.id >= 0 }) { subsMenu }
             if vlc.audios.filter({ $0.id >= 0 }).count > 1 { soundMenu }
             if !isLive {
-                circle(vlc.fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
-                    vlc.setFill(!vlc.fill, size: size)
+                circle(vlc.zoom == 0 ? "arrow.up.left.and.arrow.down.right" : vlc.zoom == 1 ? "arrow.down.right.and.arrow.up.left" : "rectangle.expand.vertical") {
+                    let next = (vlc.zoom + 1) % 3
+                    vlc.setZoom(next, size: size)
+                    show(toast: next == 1 ? "Fill screen" : next == 2 ? "Stretch" : "Original size")
                 }
             }
         }

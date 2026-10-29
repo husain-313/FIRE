@@ -351,23 +351,22 @@ struct BrowseView: View {
             ForEach(sports.shown) { r in channelRail(Sports.title(r.game), r.channels) }
             if !sports.big.isEmpty { channelRail(Self.bigTitle, sports.big, all: "big") }
             if !sports.football.isEmpty { channelRail(Self.footballTitle, sports.football) }
-            if !lib.recent.isEmpty { channelRail("Recent Channels", lib.recent, recent: true) }
+            if !lib.recent.isEmpty {
+                SelectableRail(title: "Recent Channels", elements: lib.recent, idOf: { $0.sid }, itemOf: { $0 },
+                               style: .logo, allKey: nil, showFav: true, removeTitle: "Remove from Recent Channels",
+                               onOpen: { app.open($0, rail: lib.recent, cats: [], cat: nil) },
+                               onRemove: { lib.removeRecent($0) }, onOpenAll: nil)
+            }
         }
         if model.kind != .live {
             let cw = lib.watchList(model.kind)
             if !cw.isEmpty {
-                RailShell(title: "Continue Watching") {
-                    AllCard(count: cw.count, style: .wide).onTapGesture { openRow("cw", "Continue Watching") }
-                    ForEach(cw, id: \.self) { w in
-                        Card(item: w.item, style: .wide)
-                            .onTapGesture { app.resumeWatch(w) }
-                            .contextMenu {
-                                Button(role: .destructive) { lib.removeWatching(w.kind, w.id) } label: {
-                                    Label("Remove from Continue Watching", systemImage: "xmark")
-                                }
-                            }
-                    }
-                }
+                SelectableRail(title: "Continue Watching", elements: cw, idOf: { $0.id }, itemOf: { $0.item },
+                               style: .wide, allKey: ("cw", "Continue Watching"), showFav: false,
+                               removeTitle: "Remove from Continue Watching",
+                               onOpen: { app.resumeWatch($0) },
+                               onRemove: { id in if let w = cw.first(where: { $0.id == id }) { lib.removeWatching(w.kind, w.id) } },
+                               onOpenAll: { openRow($0, $1) })
             }
         }
         let favs = lib.favList(model.kind)
@@ -406,6 +405,91 @@ struct FavButton: View {
         Button { lib.toggleFav(item) } label: {
             Label(on ? (item.kind == .live ? "Remove from Favorites" : "Remove from My List") : (item.kind == .live ? "Add to Favorites" : "Add to My List"),
                   systemImage: on ? "minus.circle" : "plus.circle")
+        }
+    }
+}
+
+// A row where a long press starts picking several cards to delete at once (Continue Watching,
+// Recent Channels). Long press a card → Select Multiple; tap to tick, Select All, Delete together.
+struct SelectableRail<T>: View {
+    let title: String
+    let elements: [T]
+    let idOf: (T) -> Int
+    let itemOf: (T) -> Item
+    let style: Card.Style
+    // (key, title) for the All card at the front, or nil for none.
+    let allKey: (String, String)?
+    var showFav = false
+    let removeTitle: String
+    let onOpen: (T) -> Void
+    let onRemove: (Int) -> Void
+    let onOpenAll: ((String, String) -> Void)?
+
+    @EnvironmentObject private var lib: Library
+    @Environment(\.metrics) private var m
+    @State private var selecting = false
+    @State private var selected: Set<Int> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 16) {
+                Text(title).font(.system(size: m.compact ? 18 : 21, weight: .bold)).lineLimit(1)
+                Spacer()
+                if selecting {
+                    Button(selected.count == elements.count ? "Clear All" : "Select All") {
+                        selected = selected.count == elements.count ? [] : Set(elements.map(idOf))
+                    }
+                    Button(role: .destructive) {
+                        for id in selected { onRemove(id) }
+                        selecting = false
+                        selected = []
+                    } label: { Text("Delete (\(selected.count))") }
+                        .disabled(selected.isEmpty)
+                    Button("Done") { selecting = false; selected = [] }
+                }
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, m.pad)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: m.gap) {
+                    if !selecting, let a = allKey {
+                        AllCard(count: elements.count, style: style).onTapGesture { onOpenAll?(a.0, a.1) }
+                    }
+                    ForEach(elements.indices, id: \.self) { i in
+                        let e = elements[i]
+                        let eid = idOf(e)
+                        Card(item: itemOf(e), style: style)
+                            .overlay(alignment: .topLeading) {
+                                if selecting {
+                                    let on = selected.contains(eid)
+                                    Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 24)).foregroundColor(on ? .fire : .white)
+                                        .padding(8).shadow(color: .black.opacity(0.6), radius: 3)
+                                }
+                            }
+                            .onTapGesture {
+                                if selecting {
+                                    if selected.contains(eid) { selected.remove(eid) } else { selected.insert(eid) }
+                                } else {
+                                    onOpen(e)
+                                }
+                            }
+                            .contextMenu {
+                                if !selecting {
+                                    Button(role: .destructive) { onRemove(eid) } label: {
+                                        Label(removeTitle, systemImage: "xmark")
+                                    }
+                                    Button { selecting = true; selected = [eid] } label: {
+                                        Label("Select Multiple", systemImage: "checkmark.circle")
+                                    }
+                                    if showFav { FavButton(item: itemOf(e)) }
+                                }
+                            }
+                    }
+                }
+                .padding(.horizontal, m.pad)
+            }
         }
     }
 }
