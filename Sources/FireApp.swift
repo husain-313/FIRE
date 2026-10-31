@@ -12,7 +12,7 @@ struct FireApp: App {
         WindowGroup {
             Group {
                 if app.account != nil {
-                    RootView().id(app.account?.user ?? "")
+                    RootView().id((app.account?.id ?? "") + "/" + (app.account?.user ?? ""))
                 } else {
                     LoginView()
                 }
@@ -41,6 +41,8 @@ struct PlayRequest: Identifiable {
 
     let id = UUID()
     let mode: Mode
+    // The films this one was picked from (an open package or a search), for the player's Next.
+    var movies: [Item] = []
 }
 
 final class AppState: ObservableObject {
@@ -51,27 +53,57 @@ final class AppState: ObservableObject {
     // The Live packages in the order the tab shows them, for the channel guide.
     static var liveCats: [Cat] = []
 
+    // The films around the one just opened, when it came from a package or a search.
+    private var movieQueue: [Item] = []
+
+    // The sign-in screen: the first subscription keeps the old storage, so it gets no id.
     func signIn(_ a: Account) {
-        a.save()
+        var n = a
+        if !Account.list.isEmpty {
+            n.id = String(UUID().uuidString.prefix(8)).lowercased()
+            n.name = URLComponents(string: a.server)?.host ?? a.server
+        }
+        Account.put(n)
+        use(n)
+    }
+
+    // Everything that belongs to the old subscription goes from memory; RootView starts afresh.
+    func use(_ a: Account) {
+        Account.setCurrent(a)
         Api.account = a
+        activate()
         account = a
     }
 
-    func signOut() {
-        Account.clear()
-        Api.account = nil
-        Store.clear()
-        Images.clear()
-        Task { await Search.shared.reset() }
-        Sports.shared.clear()
+    func delete(_ a: Account) {
+        let inUse = a.id == account?.id
+        Account.remove(a)
+        guard inUse else { return }
+        if let next = Account.list.first {
+            use(next)
+        } else {
+            Api.account = nil
+            activate()
+            account = nil
+        }
+    }
+
+    private func activate() {
+        Store.forgetMemory()
+        Task { await Search.shared.forgetMemory() }
+        Library.shared.reload()
+        Sports.shared.reload()
         path = []
-        account = nil
+        playing = nil
+        expiry = nil
+        movieQueue = []
     }
 
     func playMovie(_ it: Item) {
         let w = Library.shared.watch(.movie, it.sid) ?? Watch(kind: .movie, id: it.sid, name: it.name, icon: it.icon, ext: it.ext, backdrop: it.backdrop)
         guard let u = Api.movie(it.sid, it.ext) else { return }
-        playing = PlayRequest(mode: .vod(url: u, title: cleanTitle(it.name), sub: nil, key: "m:\(it.sid)", watch: w))
+        let around = movieQueue.contains { $0.sid == it.sid } ? movieQueue : []
+        playing = PlayRequest(mode: .vod(url: u, title: cleanTitle(it.name), sub: nil, key: "m:\(it.sid)", watch: w), movies: around)
     }
 
     func playEpisode(series: Item, ep: Item, season: String, backdrop: String?) {
@@ -85,6 +117,7 @@ final class AppState: ObservableObject {
 
     // From Continue Watching a series carries straight on with its episode.
     func resumeWatch(_ w: Watch) {
+        movieQueue = []
         if w.kind == .series, w.epId != 0, let u = Api.episode(w.epId, w.ext) {
             playing = PlayRequest(mode: .vod(url: u, title: cleanTitle(w.name), sub: w.epLabel, key: "e:\(w.epId)", watch: w))
         } else if w.kind == .movie {
@@ -94,7 +127,9 @@ final class AppState: ObservableObject {
         }
     }
 
-    func open(_ it: Item, rail: [Item], cats: [Cat], cat: Int?) {
+    // [queue]: the rail is an open package or a search, so a film's Next goes on through it.
+    func open(_ it: Item, rail: [Item], cats: [Cat], cat: Int?, queue: Bool = false) {
+        movieQueue = queue && it.kind == .movie ? rail : []
         switch it.kind {
         case .live:
             let i = rail.firstIndex { $0.sid == it.sid } ?? 0
@@ -182,6 +217,7 @@ struct SettingsView: View {
                     LabeledContent("Server", value: app.account?.server ?? "")
                     LabeledContent("Username", value: app.account?.user ?? "")
                     if let e = app.expiry, !e.isEmpty { LabeledContent("Expires", value: e) }
+                    NavigationLink("Subscriptions") { SubscriptionsList() }
                 }
                 Section {
                     UpdateRow()
@@ -202,9 +238,6 @@ struct SettingsView: View {
                     .disabled(cleared)
                 } footer: {
                     Text("Channels, films, series and posters are kept on this device so they open at once. This clears them all and loads them fresh.")
-                }
-                Section {
-                    Button("Sign Out", role: .destructive) { dismiss(); app.signOut() }
                 }
             }
             .navigationTitle("Settings")

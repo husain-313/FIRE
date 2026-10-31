@@ -326,8 +326,16 @@ struct PlayerView: View {
 
     private var isLive: Bool { if case .live = request.mode { return true } else { return false } }
 
+    private var playingFilm: Bool { vod?.watch?.kind == .movie }
+
+    // A film's next is the next film of the list it was picked from, with no season.
     private var next: QueuedEpisode? {
-        guard let w = vod?.watch, w.kind == .series,
+        guard let w = vod?.watch else { return nil }
+        if w.kind == .movie {
+            guard let i = request.movies.firstIndex(where: { $0.sid == w.id }), i + 1 < request.movies.count else { return nil }
+            return QueuedEpisode(season: "", ep: request.movies[i + 1])
+        }
+        guard w.kind == .series,
               let i = queue.firstIndex(where: { $0.ep.sid == w.epId }), i + 1 < queue.count else { return nil }
         return queue[i + 1]
     }
@@ -504,7 +512,7 @@ struct PlayerView: View {
         }
     }
 
-    // The end of a film closes the player; the end of an episode plays the next one.
+    // The end plays the next episode or the next film of the list; with none, the player closes.
     private func ended() {
         if let v = vod {
             let d = max(vlc.length, 1)
@@ -526,13 +534,20 @@ struct PlayerView: View {
 
     // Plays [n] in this player: the same connection, no trip back to the series page.
     private func playNext(_ n: QueuedEpisode) {
-        guard let v = vod, let w = v.watch, let u = Api.episode(n.ep.sid, n.ep.ext) else { close(); return }
+        guard let v = vod, let w = v.watch else { close(); return }
+        let film = w.kind == .movie
+        guard let u = film ? Api.movie(n.ep.sid, n.ep.ext) : Api.episode(n.ep.sid, n.ep.ext) else { close(); return }
         save()
-        let label = "S\(n.season) E\(n.ep.num ?? "?")"
-        let key = "e:\(n.ep.sid)"
-        let nw = Watch(kind: .series, id: w.id, name: w.name, icon: w.icon, ext: n.ep.ext, epId: n.ep.sid,
-                       epLabel: label, backdrop: n.ep.icon ?? seriesBackdrop ?? w.backdrop)
-        vod = Vod(url: u, title: v.title, sub: [label, n.ep.name].filter { !$0.isEmpty }.joined(separator: "  •  "), key: key, watch: nw)
+        let label = film ? cleanTitle(n.ep.name) : "S\(n.season) E\(n.ep.num ?? "?")"
+        let key = film ? "m:\(n.ep.sid)" : "e:\(n.ep.sid)"
+        if film {
+            let nw = lib.watch(.movie, n.ep.sid) ?? Watch(kind: .movie, id: n.ep.sid, name: n.ep.name, icon: n.ep.icon, ext: n.ep.ext, backdrop: n.ep.backdrop)
+            vod = Vod(url: u, title: label, sub: nil, key: key, watch: nw)
+        } else {
+            let nw = Watch(kind: .series, id: w.id, name: w.name, icon: w.icon, ext: n.ep.ext, epId: n.ep.sid,
+                           epLabel: label, backdrop: n.ep.icon ?? seriesBackdrop ?? w.backdrop)
+            vod = Vod(url: u, title: v.title, sub: [label, n.ep.name].filter { !$0.isEmpty }.joined(separator: "  •  "), key: key, watch: nw)
+        }
         upNextCancelled = false
         introDone = false
         introSkippedAt = nil
@@ -550,7 +565,7 @@ struct PlayerView: View {
     private func upNextCard(_ n: QueuedEpisode, _ left: Double, _ compact: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Next Episode").font(.caption.weight(.heavy)).foregroundColor(.fire)
+                Text(playingFilm ? "Next Movie" : "Next Episode").font(.caption.weight(.heavy)).foregroundColor(.fire)
                 Spacer()
                 Button { upNextCancelled = true } label: {
                     Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundColor(.white)
@@ -558,7 +573,7 @@ struct PlayerView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text("S\(n.season) E\(n.ep.num ?? "?")" + (n.ep.name.isEmpty ? "" : "  •  " + cleanTitle(n.ep.name)))
+            Text(playingFilm ? cleanTitle(n.ep.name) : "S\(n.season) E\(n.ep.num ?? "?")" + (n.ep.name.isEmpty ? "" : "  •  " + cleanTitle(n.ep.name)))
                 .font(.subheadline.weight(.semibold)).lineLimit(2)
             Button { playNext(n) } label: {
                 Label("Play in \(Int(left.rounded(.up)))", systemImage: "play.fill")
@@ -884,7 +899,7 @@ struct PlayerView: View {
                 HStack {
                     Spacer()
                     Button { playNext(n); hideSoon() } label: {
-                        Label("Next Episode", systemImage: "forward.end.fill")
+                        Label(playingFilm ? "Next Movie" : "Next Episode", systemImage: "forward.end.fill")
                             .font(.footnote.weight(.bold)).foregroundColor(.white)
                             .padding(.horizontal, 14).padding(.vertical, 9)
                             .background(Color.white.opacity(0.16), in: Capsule())

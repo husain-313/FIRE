@@ -61,7 +61,7 @@ struct PackageView: View {
         case "recent": return lib.recent
         case "big": return sports.big
         case "football": return sports.football
-        default: return sports.matches.first { "m:" + $0.id == ref.key }?.channels ?? []
+        default: return sports.shown.first { "m:" + $0.id == ref.key }?.channels ?? []
         }
     }
 
@@ -152,7 +152,8 @@ struct PackageView: View {
         // A package keeps the other packages beside it in the channel guide.
         let cats = AppState.liveCats
         let ci = ref.catId.flatMap { id in cats.firstIndex { $0.id == id } }
-        app.open(it, rail: list, cats: ci == nil ? [] : cats, cat: ci)
+        // From an open package the player's Next goes through the films shown.
+        app.open(it, rail: list, cats: ci == nil ? [] : cats, cat: ci, queue: true)
     }
 
     @ViewBuilder

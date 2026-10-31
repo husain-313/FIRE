@@ -64,6 +64,9 @@ actor Search {
         _ = build(k, wifiOnly: true)
     }
 
+    // Another subscription came into use; its index files are kept apart by name.
+    func forgetMemory() { index = [:] }
+
     func reset() {
         index = [:]
         // Every account's index, so signing out (account already gone) still clears them.

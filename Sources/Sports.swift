@@ -29,7 +29,55 @@ enum Matches {
     private static let ahead: TimeInterval = 36 * HOUR
     // Raised when the channel picks or the search change, so saved results are made again at once.
     private static let version = 3
-    private static let ud = UserDefaults(suiteName: "fire.matches") ?? .standard
+    // Each subscription has its own results; the first one (no tag) keeps the old place.
+    private static var ud: UserDefaults { UserDefaults(suiteName: "fire.matches" + (Api.account?.tag ?? "")) ?? .standard }
+
+    // Most channels carry no guide, so a guide alone rarely finds more than one. Each competition lists
+    // the channels that normally show it, from the Big Leagues package, best first.
+    private static let beIN = ["BEIN SPORTS 1", "BEIN SPORTS 2", "BEIN SPORTS 3"]
+    private static let ukSky = ["UK · SKY SPORTS MAIN EVENTS?", "UK · SKY SPORTS PL", "UK · SKY SPORTS FOOTBALL"]
+    private static let ukTnt = ["UK · TNT SPORTS 1", "UK · TNT SPORTS 2", "UK · TNT SPORTS 3"]
+    private static let es = ["ES · MOVISTAR LALIGA", "ES · DAZN LA LIGA", "ES · MOVISTAR LALIGA 2", "ES · DAZN LA LIGA 2"]
+    private static let it = ["IT · SKY SPORT CALCIO", "IT · SKY SPORT UNO", "IT · ZONA DAZN SERIE A 1", "IT · DAZN CHANNEL", "IT · SKY CALCIO 1"]
+    private static let de = ["DE · SKY SPORT TOP EVENT", "DE · SKY SPORT BUNDESLIGA 1", "DE · SKY SPORT BUNDESLIGA", "DE · SKY SPORT BUNDESLIGA 2", "DE · SKY SPORT 1", "DE · DAZN 1"]
+    private static let fr = ["FR · LIGUE1\\+ 1", "FR · CANAL\\+ FOOT", "FR · LIGUE1\\+ 2", "FR · BEIN SPORTS 1", "FR · CANAL\\+ SPORT"]
+    private static let usual: [String: [String]] = [
+        "Premier League": Array(beIN.prefix(2)) + ukSky,
+        "LaLiga": Array(beIN.prefix(2)) + es,
+        "Serie A": it,
+        "Bundesliga": de,
+        "Ligue 1": fr,
+        "Champions League": Array(beIN.prefix(2)) + Array(ukTnt.prefix(2)) + ["ES · M\\+ LIGA DE CAMPEONES", "FR · CANAL\\+ FOOT"],
+        "FA Cup": ukTnt + beIN,
+        "Carabao Cup": Array(beIN.prefix(2)) + ukSky,
+        "Community Shield": ukTnt + beIN,
+        "Copa del Rey": Array(beIN.prefix(2)) + es,
+        "Supercopa": Array(beIN.prefix(2)) + es,
+        "Coppa Italia": it,
+        "Supercoppa": it,
+        "DFB-Pokal": de,
+        "Supercup": de,
+        "Coupe de France": fr,
+        "Trophée des Champions": fr,
+    ]
+
+    // A match's row: the channels whose guide names it, then the usual ones up to five.
+    static func cards(_ g: Game, found: [Item], big: [Item], want: Int = 5) -> [Item] {
+        var out = found
+        for p in usual[g.league] ?? beIN {
+            if out.count >= want { break }
+            let rx = re("^(?:" + p + ")$")
+            guard let c = big.first(where: { matches(rx, $0.name) }) else { continue }
+            if !out.contains(where: { $0.sid == c.sid || $0.name.caseInsensitiveCompare(c.name) == .orderedSame }) { out.append(c) }
+        }
+        return out
+    }
+
+    // The Refresh button: ask ESPN and the guides again now instead of waiting for their time.
+    static func forget() {
+        let d = ud
+        for k in ["at", "searched", "searchV"] { d.removeObject(forKey: k) }
+    }
 
     // ESPN team id -> how guides write the team.
     private static let teams: [(String, [String])] = [
@@ -116,6 +164,8 @@ enum Matches {
             return saved
         }
         guard let found = await search(games) else { return saved }
+        // The subscription changed during the pass: these results belong to the old one.
+        if Task.isCancelled { return saved }
         let (byGame, foot) = found
         ud.set(now.timeIntervalSince1970, forKey: "searched")
         ud.set(version, forKey: "searchV")
@@ -276,6 +326,7 @@ enum Matches {
         var asked = 0
         var start = 0
         while start < groups.keys.count && asked < 600 {
+            if Task.isCancelled { return nil }
             let batch = Array(groups.keys.enumerated().dropFirst(start).prefix(6))
             start += batch.count
             let looks = await withTaskGroup(of: Look.self) { group -> [Look] in
@@ -414,7 +465,7 @@ enum Matches {
             // In the package's own order (beIN 1, 2, 3…).
             out += order.compactMap { best[$0]?.0 }
         }
-        guard answered > 0, !out.isEmpty else { return big() }
+        guard answered > 0, !out.isEmpty, !Task.isCancelled else { return big() }
         ud.set(now, forKey: "bigAt")
         ud.set(version, forKey: "bigV")
         writeItems(out, "big")
@@ -428,7 +479,8 @@ final class Sports: ObservableObject {
     @Published private(set) var matches: [MatchRow] = []
     @Published private(set) var big: [Item] = []
     @Published private(set) var football: [Item] = []
-    private var busy = false
+    @Published private(set) var busy = false
+    private var pass: Task<Void, Never>?
 
     private init() { load() }
 
@@ -438,21 +490,29 @@ final class Sports: ObservableObject {
         football = Matches.football()
     }
 
-    // Rows with channels, from a day and a half before kickoff until full time, in kickoff order.
+    // Rows from a day and a half before kickoff until full time, in kickoff order, each with the
+    // channels its guide names and then the usual ones for the competition up to five.
     var shown: [MatchRow] {
         let now = Date()
-        return matches.filter { !$0.channels.isEmpty && now <= $0.game.kickoff.addingTimeInterval(Matches.length) }
+        return matches.filter { now <= $0.game.kickoff.addingTimeInterval(Matches.length) }
             .sorted { $0.game.kickoff < $1.game.kickoff }
+            .map { MatchRow(game: $0.game, channels: Matches.cards($0.game, found: $0.channels, big: big)) }
+            .filter { !$0.channels.isEmpty }
     }
 
     // The package shows at once; the pass over the guides after it can take a few minutes.
-    func refresh() {
+    // [force] is the Refresh button: finished matches go now and everything is asked for again.
+    func refresh(force: Bool = false) {
+        if force { objectWillChange.send() }
         guard !busy, Api.account != nil else { return }
+        if force { Matches.forget() }
         busy = true
-        Task { @MainActor in
+        pass = Task { @MainActor in
             let b = await Matches.refreshBig()
+            if Task.isCancelled { return }
             if b != big { big = b }
             let m = await Matches.lookNow()
+            if Task.isCancelled { return }
             if m != matches { matches = m }
             let f = Matches.football()
             if f != football { football = f }
@@ -462,6 +522,14 @@ final class Sports: ObservableObject {
 
     func clear() {
         Matches.clear()
+        load()
+    }
+
+    // Another subscription came into use: what is running belongs to the old one.
+    func reload() {
+        pass?.cancel()
+        pass = nil
+        busy = false
         load()
     }
 

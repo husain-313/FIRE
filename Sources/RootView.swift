@@ -7,6 +7,7 @@ struct RootView: View {
     @StateObject private var series = BrowseModel(.series)
     @State private var tab = Kind.live
     @State private var settings = false
+    @State private var subscriptions = false
     @Environment(\.scenePhase) private var phase
 
     var body: some View {
@@ -39,6 +40,12 @@ struct RootView: View {
             PlayerView(request: req)
         }
         .sheet(isPresented: $settings) { SettingsView() }
+        .sheet(isPresented: $subscriptions) {
+            NavigationStack {
+                SubscriptionsList()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { subscriptions = false } } }
+            }
+        }
         .task {
             Sports.shared.refresh()
             app.expiry = await Store.load("", ttl: 6 * HOUR, parseExpiry)
@@ -78,6 +85,16 @@ struct RootView: View {
             Image(systemName: "gearshape.fill").font(.system(size: 18)).foregroundColor(.white.opacity(0.85))
                 .frame(width: 40, height: 40).background(Color.white.opacity(0.08), in: Circle())
         }
+        let account = Button { subscriptions = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "person.fill").font(.system(size: 14))
+                Text(app.account?.name ?? "").font(.footnote.weight(.semibold)).lineLimit(1)
+            }
+            .foregroundColor(.white.opacity(0.85))
+            .padding(.horizontal, 12).frame(height: 40)
+            .frame(maxWidth: m.compact ? 150 : 200)
+            .background(Color.white.opacity(0.08), in: Capsule())
+        }
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Image("Logo").resizable().scaledToFit().frame(height: m.compact ? 24 : 28)
@@ -86,6 +103,7 @@ struct RootView: View {
                 }
                 Spacer()
                 if !m.compact { tabs }
+                account
                 gear
             }
             if m.compact { tabs }
@@ -223,6 +241,7 @@ struct BrowseView: View {
                     HStack(spacing: 10) {
                         searchField
                         packagesButton
+                        if model.kind == .live { refreshButton }
                     }
                     .padding(.horizontal, m.pad)
                     if model.query.trimmingCharacters(in: .whitespaces).count >= 2 {
@@ -276,6 +295,27 @@ struct BrowseView: View {
         }
         .buttonStyle(.plain)
         .disabled(rows.isEmpty)
+    }
+
+    // Live: drops finished matches and looks for channels again; it spins while the search runs.
+    private var refreshButton: some View {
+        Button { sports.refresh(force: true) } label: {
+            HStack(spacing: 8) {
+                if sports.busy {
+                    ProgressView().tint(.white)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
+                if !m.compact { Text("Refresh") }
+            }
+            .font(.system(size: 16, weight: .semibold)).foregroundColor(.white)
+            .padding(.horizontal, m.compact ? 0 : 18)
+            .frame(minWidth: 48, minHeight: 48)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Refresh matches")
     }
 
     private func ref(_ key: String, _ title: String) -> PackageRef { PackageRef(kind: model.kind, key: key, title: title) }
@@ -336,7 +376,7 @@ struct BrowseView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: w, maximum: w * 1.3), spacing: m.gap, alignment: .top)], spacing: m.gap + 6) {
                     ForEach(r) { it in
                         Card(item: it, style: model.kind == .live ? .logo : .poster, flexible: true)
-                            .onTapGesture { app.open(it, rail: r, cats: [], cat: nil) }
+                            .onTapGesture { app.open(it, rail: r, cats: [], cat: nil, queue: true) }
                     }
                 }
                 .padding(.horizontal, m.pad)

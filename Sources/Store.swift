@@ -83,6 +83,9 @@ enum Store {
         }
     }
 
+    // Another subscription came into use; its lists on disk are kept apart by name.
+    static func forgetMemory() { mem.removeAllObjects() }
+
     static func clear() {
         mem.removeAllObjects()
         try? FileManager.default.removeItem(at: dir)

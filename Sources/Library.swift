@@ -30,16 +30,30 @@ struct Watch: Codable, Hashable {
 // Favourites, Continue Watching and where each film or episode was left, saved on the device.
 final class Library: ObservableObject {
     static let shared = Library()
-    private let ud = UserDefaults.standard
+    private var ud = Library.defaults()
 
     @Published private(set) var favs: [Item] = []
     @Published private(set) var watching: [Watch] = []
     @Published private(set) var recent: [Item] = []
 
-    private init() {
-        if let d = ud.data(forKey: "favs"), let v = try? JSONDecoder().decode([Item].self, from: d) { favs = v }
-        if let d = ud.data(forKey: "watching"), let v = try? JSONDecoder().decode([Watch].self, from: d) { watching = v }
-        if let d = ud.data(forKey: "recent"), let v = try? JSONDecoder().decode([Item].self, from: d) { recent = v }
+    private init() { load() }
+
+    // Each subscription has its own; the first one (no tag) keeps the old place.
+    private static func defaults() -> UserDefaults {
+        guard let tag = Api.account?.tag, !tag.isEmpty else { return .standard }
+        return UserDefaults(suiteName: "fire.acc" + tag) ?? .standard
+    }
+
+    private func load() {
+        favs = ud.data(forKey: "favs").flatMap { try? JSONDecoder().decode([Item].self, from: $0) } ?? []
+        watching = ud.data(forKey: "watching").flatMap { try? JSONDecoder().decode([Watch].self, from: $0) } ?? []
+        recent = ud.data(forKey: "recent").flatMap { try? JSONDecoder().decode([Item].self, from: $0) } ?? []
+    }
+
+    // Another subscription came into use.
+    func reload() {
+        ud = Library.defaults()
+        load()
     }
 
     // MARK: Recent Channels: the last eight watched for 5 seconds or more, newest first
