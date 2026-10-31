@@ -179,7 +179,9 @@ final class BrowseModel: ObservableObject {
         }
         guard hero == nil, let first = cats?.first else { return }
         let k = kind
-        if let items = await Store.load(Q.streams(k, first), ttl: 6 * HOUR, { parseItems(k, $0) }), let it = items.first {
+        // Names like "##### beIN SPORTS SD #####" only divide a package; they play nothing.
+        if let items = await Store.load(Q.streams(k, first), ttl: 6 * HOUR, { parseItems(k, $0) }),
+           let it = items.first(where: { !$0.name.contains("##") }) {
             await setHero(it)
         }
     }
