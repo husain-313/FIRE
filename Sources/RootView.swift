@@ -256,6 +256,12 @@ struct BrowseView: View {
             .onChange(of: model.scrollTop) { _ in withAnimation { proxy.scrollTo("top", anchor: .top) } }
         }
         .onAppear { model.start() }
+        .alert("No Wi-Fi", isPresented: Binding(get: { model.kind == .live && sports.notice != nil },
+                                                set: { if !$0 { sports.notice = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(sports.notice ?? "")
+        }
         .sheet(isPresented: $packages) {
             PackagesSheet(rows: rows) { r in app.path.append(.package(r)) }
         }

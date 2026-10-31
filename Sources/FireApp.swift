@@ -142,7 +142,7 @@ final class AppState: ObservableObject {
 
 struct LoginView: View {
     @EnvironmentObject private var app: AppState
-    @State private var server = "http://example.com"
+    @State private var server = ""
     @State private var user = ""
     @State private var pass = ""
     @State private var busy = false
@@ -156,7 +156,7 @@ struct LoginView: View {
                     Image("Logo").resizable().scaledToFit().frame(height: 52).padding(.bottom, 12)
                     Text("Sign in with your IPTV account").font(.headline).foregroundColor(.soft)
                     VStack(spacing: 12) {
-                        field("Server", text: $server, keyboard: .URL)
+                        field("Server, e.g. http://example.com:8080", text: $server, keyboard: .URL)
                         field("Username", text: $user)
                         SecureField("Password", text: $pass)
                             .textContentType(.password)

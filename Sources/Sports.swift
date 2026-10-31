@@ -73,6 +73,9 @@ enum Matches {
         return out
     }
 
+    // Set when the last look could not read the guides (no Wi-Fi, or no connection at all).
+    private(set) static var couldNotSearch = false
+
     // The Refresh button: ask ESPN and the guides again now instead of waiting for their time.
     static func forget() {
         let d = ud
@@ -153,6 +156,7 @@ enum Matches {
     // MARK: Matches
 
     static func lookNow() async -> [MatchRow] {
+        couldNotSearch = false
         let now = Date()
         let games = await fixtures(now).filter { inWindow($0, now) }
         if games.isEmpty { return [] }
@@ -163,7 +167,10 @@ enum Matches {
         if searchedAll && (saved.allSatisfy { !$0.channels.isEmpty } || now.timeIntervalSince(searchedAt) < 2 * HOUR) {
             return saved
         }
-        guard let found = await search(games) else { return saved }
+        guard let found = await search(games) else {
+            couldNotSearch = !Task.isCancelled
+            return saved
+        }
         // The subscription changed during the pass: these results belong to the old one.
         if Task.isCancelled { return saved }
         let (byGame, foot) = found
@@ -316,6 +323,9 @@ enum Matches {
                 if k.count >= 3 && !ch.name.contains("####") { groups.add(k, ch) }
             }
         }
+
+        // No package answered (no connection): the saved channels must stay, not be replaced by nothing.
+        if groups.keys.isEmpty { return nil }
 
         // One guide per channel: many copies carry none, so up to two copies are tried. At most 600
         // guides are read in a pass, six at a time.
@@ -480,7 +490,10 @@ final class Sports: ObservableObject {
     @Published private(set) var big: [Item] = []
     @Published private(set) var football: [Item] = []
     @Published private(set) var busy = false
+    // Shown once after the Refresh button when the channels could not be searched.
+    @Published var notice: String?
     private var pass: Task<Void, Never>?
+    private var pressed = false
 
     private init() { load() }
 
@@ -503,7 +516,10 @@ final class Sports: ObservableObject {
     // The package shows at once; the pass over the guides after it can take a few minutes.
     // [force] is the Refresh button: finished matches go now and everything is asked for again.
     func refresh(force: Bool = false) {
-        if force { objectWillChange.send() }
+        if force {
+            objectWillChange.send()
+            pressed = true
+        }
         guard !busy, Api.account != nil else { return }
         if force { Matches.forget() }
         busy = true
@@ -517,6 +533,10 @@ final class Sports: ObservableObject {
             let f = Matches.football()
             if f != football { football = f }
             busy = false
+            if pressed && Matches.couldNotSearch {
+                notice = "Channels were not searched because Wi-Fi isn't available, or Low Data Mode is on. The saved channels stay. Connect to Wi-Fi and press Refresh again."
+            }
+            pressed = false
         }
     }
 
@@ -530,6 +550,8 @@ final class Sports: ObservableObject {
         pass?.cancel()
         pass = nil
         busy = false
+        pressed = false
+        notice = nil
         load()
     }
 
