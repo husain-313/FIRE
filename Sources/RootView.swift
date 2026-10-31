@@ -73,6 +73,8 @@ struct RootView: View {
                 } label: {
                     Text(["Live", "Movies", "Series"][k.rawValue])
                         .font(.system(size: m.compact ? 15 : 17, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
                         .foregroundColor(tab == k ? .fire : .white.opacity(0.85))
                         .padding(.horizontal, m.compact ? 14 : 18).padding(.vertical, 8)
                         .frame(maxWidth: m.compact ? .infinity : nil)
@@ -91,17 +93,21 @@ struct RootView: View {
                 Text(app.account?.name ?? "").font(.footnote.weight(.semibold)).lineLimit(1)
             }
             .foregroundColor(.white.opacity(0.85))
-            .padding(.horizontal, 12).frame(height: 40)
-            .frame(maxWidth: m.compact ? 150 : 200)
+            // As wide as the name needs, so the tabs beside it keep their room.
+            .frame(height: 40)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: 150)
+            .fixedSize()
             .background(Color.white.opacity(0.08), in: Capsule())
         }
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Image("Logo").resizable().scaledToFit().frame(height: m.compact ? 24 : 28)
                 if !m.compact, let e = app.expiry, !e.isEmpty {
-                    Text("Expires \(e)").font(.footnote).foregroundColor(.soft)
+                    // The first to give way on a phone on its side.
+                    Text("Expires \(e)").font(.footnote).foregroundColor(.soft).lineLimit(1).layoutPriority(-1)
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 if !m.compact { tabs }
                 account
                 gear
@@ -173,7 +179,7 @@ final class BrowseModel: ObservableObject {
             await setHero(w.item)
             return
         }
-        if kind == .live, let f = Library.shared.favList(.live).first {
+        if kind == .live, let f = Library.shared.favList(.live).first(where: { !$0.name.contains("##") }) {
             await setHero(f)
             return
         }
