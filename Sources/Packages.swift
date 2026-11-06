@@ -61,6 +61,7 @@ struct PackageView: View {
         case "recent": return lib.recent
         case "big": return sports.big
         case "football": return sports.football
+        case let k where k.hasPrefix("pk:"): return sports.curated[k] ?? []
         default: return sports.shown.first { "m:" + $0.id == ref.key }?.channels ?? []
         }
     }
@@ -173,12 +174,17 @@ struct PackageView: View {
     }
 }
 
-// Packages: every row of the tab in a list, narrowed by the field above it; a tap opens that row whole.
+// Packages: every row of the tab in a list, narrowed by the field above it; a tap opens that row
+// whole. Select: tick packages (or Select All) and Hide them from the tab together.
 struct PackagesSheet: View {
+    let kind: Kind
     let rows: [PackageRef]
     let pick: (PackageRef) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
+    @State private var selecting = false
+    @State private var picked: Set<String> = []
+    @State private var confirm = false
 
     private var shown: [PackageRef] {
         let words = Search.norm(query).split(separator: " ").map(String.init)
@@ -189,17 +195,49 @@ struct PackagesSheet: View {
         }
     }
 
+    // Only packages can be hidden (not Continue Watching, favourites, matches…).
+    private var hideable: [PackageRef] { shown.filter { Hidden.hideable($0.key) } }
+
     var body: some View {
         NavigationStack {
-            List(shown, id: \.key) { r in
-                Button {
-                    dismiss()
-                    pick(r)
-                } label: {
-                    HStack {
-                        Text(r.title).foregroundColor(.white).lineLimit(2)
-                        Spacer()
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundColor(.soft)
+            List {
+                if selecting && !hideable.isEmpty {
+                    let every = hideable.allSatisfy { picked.contains($0.key) }
+                    Button(every ? "Select None" : "Select All") {
+                        if every { picked.subtract(hideable.map(\.key)) } else { picked.formUnion(hideable.map(\.key)) }
+                    }
+                }
+                ForEach(shown, id: \.key) { r in
+                    let can = Hidden.hideable(r.key)
+                    Button {
+                        if selecting {
+                            guard can else { return }
+                            if picked.contains(r.key) { picked.remove(r.key) } else { picked.insert(r.key) }
+                        } else {
+                            dismiss()
+                            pick(r)
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            if selecting {
+                                Image(systemName: picked.contains(r.key) ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 22)).foregroundColor(picked.contains(r.key) ? .fire : .soft)
+                                    .opacity(can ? 1 : 0.25)
+                            }
+                            Text(r.title).foregroundColor(.white).lineLimit(2)
+                            Spacer()
+                            if !selecting {
+                                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundColor(.soft)
+                            }
+                        }
+                    }
+                    .contextMenu {
+                        if can && !selecting {
+                            HideButton(kind: kind, key: r.key, title: r.title)
+                            Button { selecting = true; picked = [r.key] } label: {
+                                Label("Select Multiple", systemImage: "checkmark.circle")
+                            }
+                        }
                     }
                 }
             }
@@ -208,9 +246,34 @@ struct PackagesSheet: View {
                 if shown.isEmpty { Text("No packages found").foregroundColor(.soft) }
             }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search packages…")
-            .navigationTitle("Packages · \(shown.count)")
+            .navigationTitle(selecting ? "Selected · \(picked.count)" : "Packages · \(shown.count)")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    if selecting {
+                        Button("Cancel") { selecting = false; picked = [] }
+                    } else {
+                        Button("Close") { dismiss() }
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if selecting {
+                        Button("Hide (\(picked.count))") { confirm = true }.disabled(picked.isEmpty)
+                    } else {
+                        Button("Select") { selecting = true; picked = [] }
+                    }
+                }
+            }
+            .confirmationDialog("Hide \(picked.count) packages from this tab?", isPresented: $confirm, titleVisibility: .visible) {
+                Button("Hide", role: .destructive) {
+                    Hidden.shared.hide(kind, rows.filter { picked.contains($0.key) })
+                    selecting = false
+                    picked = []
+                    dismiss()
+                }
+            } message: {
+                Text("They come back with the eye button next to the search field.")
+            }
         }
     }
 }

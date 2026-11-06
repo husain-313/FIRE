@@ -233,6 +233,8 @@ struct BrowseView: View {
     @EnvironmentObject private var lib: Library
     @EnvironmentObject private var sports: Sports
     @State private var packages = false
+    @State private var unhide = false
+    @ObservedObject private var hidden = Hidden.shared
     @Environment(\.metrics) private var m
     @FocusState private var searchFocused: Bool
 
@@ -250,6 +252,7 @@ struct BrowseView: View {
                         searchField
                         packagesButton
                         if model.kind == .live { refreshButton }
+                        if !hidden.list(model.kind).isEmpty { unhideButton }
                     }
                     .padding(.horizontal, m.pad)
                     if model.query.trimmingCharacters(in: .whitespaces).count >= 2 {
@@ -271,8 +274,9 @@ struct BrowseView: View {
             Text(sports.notice ?? "")
         }
         .sheet(isPresented: $packages) {
-            PackagesSheet(rows: rows) { r in app.path.append(.package(r)) }
+            PackagesSheet(kind: model.kind, rows: rows) { r in app.path.append(.package(r)) }
         }
+        .sheet(isPresented: $unhide) { UnhideSheet(kind: model.kind) }
     }
 
     private var searchField: some View {
@@ -332,6 +336,28 @@ struct BrowseView: View {
         .accessibilityLabel("Refresh matches")
     }
 
+    // Hidden packages of this tab: the eye with their number; opens the list to bring them back.
+    private var unhideButton: some View {
+        Button { unhide = true } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "eye")
+                Text("\(hidden.list(model.kind).count)")
+            }
+            .font(.system(size: 16, weight: .semibold)).foregroundColor(.white)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 48)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Hidden packages")
+    }
+
+    private func shows(_ key: String) -> Bool { !hidden.isHidden(model.kind, key) }
+
+    // The server's packages less the hidden ones.
+    private var shownCats: [Cat]? { model.cats.map { $0.filter { shows("c:" + $0.id) } } }
+
     private func ref(_ key: String, _ title: String) -> PackageRef { PackageRef(kind: model.kind, key: key, title: title) }
 
     // Every row of the tab, in the order they show.
@@ -339,14 +365,15 @@ struct BrowseView: View {
         var out: [PackageRef] = []
         if model.kind == .live {
             out += sports.shown.map { ref("m:" + $0.id, Sports.title($0.game)) }
-            if !sports.big.isEmpty { out.append(ref("big", Self.bigTitle)) }
+            if !sports.big.isEmpty && shows("big") { out.append(ref("big", Self.bigTitle)) }
+            for p in Curated.packs where !(sports.curated[p.key] ?? []).isEmpty && shows(p.key) { out.append(ref(p.key, p.title)) }
             if !sports.football.isEmpty { out.append(ref("football", Self.footballTitle)) }
             if !lib.recent.isEmpty { out.append(ref("recent", "Recent Channels")) }
         } else if !lib.watchList(model.kind).isEmpty {
             out.append(ref("cw", "Continue Watching"))
         }
         if !lib.favList(model.kind).isEmpty { out.append(ref("fav", model.kind == .live ? "Favorite Channels" : "My List")) }
-        out += (model.cats ?? []).map { ref("c:" + $0.id, $0.name) }
+        out += (shownCats ?? []).map { ref("c:" + $0.id, $0.name) }
         return out
     }
 
@@ -361,6 +388,7 @@ struct BrowseView: View {
         RailShell(title: title) {
             if let key {
                 AllCard(count: list.count, style: .logo).onTapGesture { openRow(key, title) }
+                    .contextMenu { if Hidden.hideable(key) { HideButton(kind: model.kind, key: key, title: title) } }
             }
             ForEach(Array(list.enumerated()), id: \.offset) { _, it in
                 Card(item: it, style: .logo)
@@ -403,7 +431,11 @@ struct BrowseView: View {
         if model.kind == .live {
             // The big teams' matches from a day and a half before kickoff until full time.
             ForEach(sports.shown) { r in channelRail(Sports.title(r.game), r.channels) }
-            if !sports.big.isEmpty { channelRail(Self.bigTitle, sports.big, all: "big") }
+            if !sports.big.isEmpty && shows("big") { channelRail(Self.bigTitle, sports.big, all: "big") }
+            // The hand-picked packages: US films & series, news, Shia channels.
+            ForEach(Curated.packs, id: \.key) { p in
+                if let list = sports.curated[p.key], !list.isEmpty, shows(p.key) { channelRail(p.title, list, all: p.key) }
+            }
             if !sports.football.isEmpty { channelRail(Self.footballTitle, sports.football) }
             if !lib.recent.isEmpty {
                 SelectableRail(title: "Recent Channels", elements: lib.recent, idOf: { $0.sid }, itemOf: { $0 },
@@ -433,7 +465,7 @@ struct BrowseView: View {
                 }
             }
         }
-        if let cats = model.cats {
+        if let cats = shownCats {
             ForEach(Array(cats.enumerated()), id: \.element.id) { i, c in
                 CatRail(kind: model.kind, cat: c, index: i, cats: cats)
             }
@@ -583,6 +615,7 @@ struct CatRail: View {
                 } else {
                     AllCard(count: items.count, style: kind == .live ? .logo : .poster)
                         .onTapGesture { app.path.append(.package(PackageRef(kind: kind, key: "c:" + cat.id, title: cat.name))) }
+                        .contextMenu { HideButton(kind: kind, key: "c:" + cat.id, title: cat.name) }
                     ForEach(items) { it in
                         Card(item: it, style: kind == .live ? .logo : .poster)
                             .onTapGesture { app.open(it, rail: items, cats: cats, cat: index) }
@@ -600,6 +633,20 @@ struct CatRail: View {
             if items == nil {
                 items = await Store.load(Q.streams(kind, cat), ttl: 6 * HOUR) { parseItems(kind, $0) } ?? []
             }
+        }
+    }
+}
+
+// Long press on a package's All card: take the package off this tab (Unhide brings it back).
+struct HideButton: View {
+    let kind: Kind
+    let key: String
+    let title: String
+    var body: some View {
+        Button(role: .destructive) {
+            Hidden.shared.hide(kind, [PackageRef(kind: kind, key: key, title: title)])
+        } label: {
+            Label("Hide this package", systemImage: "eye.slash")
         }
     }
 }

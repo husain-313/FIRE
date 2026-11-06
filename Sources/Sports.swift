@@ -489,6 +489,8 @@ final class Sports: ObservableObject {
     @Published private(set) var matches: [MatchRow] = []
     @Published private(set) var big: [Item] = []
     @Published private(set) var football: [Item] = []
+    // The hand-picked packages (Curated), by key.
+    @Published private(set) var curated: [String: [Item]] = [:]
     @Published private(set) var busy = false
     // Shown once after the Refresh button when the channels could not be searched.
     @Published var notice: String?
@@ -501,6 +503,7 @@ final class Sports: ObservableObject {
         matches = Matches.saved()
         big = Matches.big()
         football = Matches.football()
+        curated = Curated.saved()
     }
 
     // Rows from a day and a half before kickoff until full time, in kickoff order, each with the
@@ -527,6 +530,9 @@ final class Sports: ObservableObject {
             let b = await Matches.refreshBig()
             if Task.isCancelled { return }
             if b != big { big = b }
+            let c = await Curated.refresh()
+            if Task.isCancelled { return }
+            if c != curated { curated = c }
             let m = await Matches.lookNow()
             if Task.isCancelled { return }
             if m != matches { matches = m }
@@ -542,6 +548,7 @@ final class Sports: ObservableObject {
 
     func clear() {
         Matches.clear()
+        Curated.clear()
         load()
     }
 

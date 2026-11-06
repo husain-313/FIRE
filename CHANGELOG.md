@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1
+What's new in FIRE on the TV (up to its 6.3), on iPhone and iPad.
+- **Ready-made Live packages.** After Big Leagues: 🎬 US Movies & Series (HBO, Showtime, Starz, Cinemax, AMC, FX…), 📰 News (Arabic first, then English), and 🕌 Shia Channels. One card per channel, its HD copy when there is one. Each has an All card.
+- **Hide packages.** Press and hold a package's All card and choose Hide this package. In the Packages list, tap Select to tick several (or Select All) and hide them together. The eye button next to the search field shows how many are hidden and brings them back (tick some, or Select All, then Unhide). Each tab and each subscription keeps its own.
+- **Quality.** On a live channel, the 4K button lists the same channel from the provider's other packages (HD, 4K, RAW, HEVC, SD…), sharpest first, the Arabic packages' copies before other countries'. The title shows the size really playing, since names often promise more. Works for Big Leagues and the ready-made packages too.
+
 ## 1.6
 - **Picture size.** Double-tap a film or episode, or tap the size button, to step through Original size, Fill screen, and Stretch — handy for phone-shot vertical clips (the AI series) that would otherwise sit small in the middle.
 - **Short clips are remembered.** Very short episodes (a minute or two, like the AI series) now stay in Continue Watching and keep their place, where before they were always dropped.

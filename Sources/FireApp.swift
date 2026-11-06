@@ -92,6 +92,7 @@ final class AppState: ObservableObject {
         Store.forgetMemory()
         Task { await Search.shared.forgetMemory() }
         Library.shared.reload()
+        Hidden.shared.reload()
         Sports.shared.reload()
         path = []
         playing = nil

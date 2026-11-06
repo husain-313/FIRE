@@ -323,8 +323,78 @@ struct PlayerView: View {
     @State private var adjustHide: Task<Void, Never>?
     // The brightness before the player changed it, put back when the player closes.
     @State private var savedBrightness: CGFloat?
+    // The Quality list: the playing channel's other copies (nil while they are looked up).
+    @State private var quality = false
+    @State private var copies: [Item]?
 
     private var isLive: Bool { if case .live = request.mode { return true } else { return false } }
+
+    // MARK: Quality (live): the same channel from the provider's other packages (HD, 4K, RAW…),
+    // as on the TV. The names often promise more than the picture, so the title shows the real size.
+
+    private func showQuality() {
+        guard channels.indices.contains(index) else { return }
+        let ch = channels[index]
+        copies = nil
+        quality = true
+        hideTask?.cancel()
+        Task {
+            let c = await Search.shared.copies(ch.name, keep: ch.sid)
+            if channels.indices.contains(index), channels[index].sid == ch.sid { copies = c.isEmpty ? [ch] : c }
+        }
+    }
+
+    // This copy takes the channel's place in the list being zapped through.
+    private func pickCopy(_ c: Item) {
+        quality = false
+        guard channels.indices.contains(index), c.sid != channels[index].sid else { return }
+        let ch = channels[index]
+        var n = Item(kind: .live, sid: c.sid, name: ch.name, icon: ch.icon, ext: c.ext)
+        n.num = ch.num
+        channels[index] = n
+        if playCat == shownCat, var s = shownChannels, s.indices.contains(index), s[index].sid == ch.sid {
+            s[index] = n
+            shownChannels = s
+        }
+        play(index)
+        show(toast: "Quality: \(c.name)")
+    }
+
+    private var qualitySheet: some View {
+        NavigationStack {
+            Group {
+                if let list = copies {
+                    List(list, id: \.sid) { c in
+                        let on = channels.indices.contains(index) && channels[index].sid == c.sid
+                        Button { pickCopy(c) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "checkmark").opacity(on ? 1 : 0).foregroundColor(.fire)
+                                Text(c.name).foregroundColor(.white).lineLimit(1)
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                } else {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                        Text("Looking for other copies… the first time takes a minute.").foregroundColor(.soft)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(30)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .navigationTitle(qualityTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { quality = false } } }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var qualityTitle: String {
+        let s = vlc.mp.videoSize
+        return s.height > 0 ? "Quality · now \(Int(s.width))×\(Int(s.height))" : "Quality"
+    }
 
     private var playingFilm: Bool { vod?.watch?.kind == .movie }
 
@@ -392,6 +462,7 @@ struct PlayerView: View {
         }
         .statusBarHidden(!controls)
         .persistentSystemOverlays(.hidden)
+        .sheet(isPresented: $quality, onDismiss: { hideSoon() }) { qualitySheet }
         .onAppear(perform: start)
         .onDisappear(perform: finish)
         .onChange(of: vlc.time) { t in
@@ -806,6 +877,7 @@ struct PlayerView: View {
             if isLive {
                 circle("arrow.uturn.backward") { previousChannel() }
                 circle("list.bullet") { withAnimation { guide = true; loadShown() } }
+                circle("4k.tv") { showQuality() }
             }
             if vlc.subs.contains(where: { $0.id >= 0 }) { subsMenu }
             if vlc.audios.filter({ $0.id >= 0 }).count > 1 { soundMenu }

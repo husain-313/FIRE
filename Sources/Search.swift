@@ -56,6 +56,74 @@ actor Search {
             .prefix(Search.limit).map { $0.element.1 }
     }
 
+    // The Quality button: the other copies of the playing channel (its HD, 4K, RAW, HEVC…
+    // packages carry the same channel under the same plain label), sharpest first, the provider's
+    // own Arabic copies before other countries'. Looked up by the playing copy's real server name,
+    // since Big Leagues and the hand-picked packages show names of their own. Same as the TV (6.2).
+    func copies(_ name: String, keep: Int) async -> [Item] {
+        guard await ready(.live), let list = index[.live] else { return [] }
+        let real = list.first { $0.item.sid == keep }?.item.name ?? name
+        let key = Matches.label(real).uppercased()
+        // A cheap first cut on the label's longest word before the full label check.
+        let word = Search.norm(key).split(separator: " ").map(String.init).max { $0.count < $1.count } ?? ""
+        var out: [(Int, Item)] = []
+        for e in list {
+            let n = e.item.name
+            if n.contains("##") { continue }
+            // Names like "beIN SP⚽RTS 1" carry a ball for the O.
+            if !word.isEmpty && !e.norm.contains(word) && !(n.contains("⚽") && e.norm.replacingOccurrences(of: "⚽️", with: "o").replacingOccurrences(of: "⚽", with: "o").contains(word)) { continue }
+            guard Matches.label(n).uppercased() == key else { continue }
+            out.append(((Search.foreignCopy(n) ? 100 : 0) + Search.grade(n), e.item))
+        }
+        // One copy of each kind (the list would run to 30+), and always the one playing.
+        let sorted = out.enumerated().sorted { ($0.element.0, $0.offset) < ($1.element.0, $1.offset) }.map { $0.element }
+        var seen = Set<Int>()
+        var picked: [Item] = []
+        for (r, it) in sorted {
+            if it.sid != keep {
+                if seen.contains(r) { continue }
+                seen.insert(r)
+            }
+            picked.append(it)
+        }
+        if let i = picked.firstIndex(where: { $0.sid == keep }), i >= 12 { picked.insert(picked.remove(at: i), at: 11) }
+        return Array(picked.prefix(12))
+    }
+
+    // The quality a copy's name ends with ("ᴴᴰ", "4K", "ʰᵉᵛᶜ" …); the tag before ":" is the
+    // provider's ("8K:" on every beIN copy), not the picture's.
+    // 0 4K/UHD, 1 FHD, 2 HD, 3 RAW, 4 HEVC, 5 unmarked, 6 SD, 7 LQ.
+    private static let grades: [String?] = [#"\b(4K|UHD|2160P?|3840P?)\b"#, #"\b(FHD|1080P?)\b"#, #"\b(HD|720P?)\b"#,
+                                            #"\bRAW\b"#, #"\b(HEVC|H265)\b"#, nil, #"\b(SD|480P?)\b"#, #"\bLQ\b"#]
+
+    private static func tagCut(_ name: String) -> String.Index? {
+        guard let c = name.firstIndex(where: { $0 == ":" || $0 == "|" }) else { return nil }
+        let d = name.distance(from: name.startIndex, to: c)
+        return (1...10).contains(d) ? c : nil
+    }
+
+    static func grade(_ name: String) -> Int {
+        let tail = tagCut(name).map { String(name[name.index(after: $0)...]) } ?? name
+        let t = tail.precomposedStringWithCompatibilityMapping.uppercased()
+        for (i, g) in grades.enumerated() {
+            if let g, t.range(of: g, options: .regularExpression) != nil { return i }
+        }
+        return 5
+    }
+
+    // "FR: BEIN SPORTS 1", "TR VIP: …", "AU: …" come from other countries' packages; the Arabic
+    // ones carry the provider's own tags ("8K:", "SS:", "F:", "BE:") or none.
+    private static let foreign: Set<String> = ["en", "de", "fr", "gr", "ir", "fa", "al", "es", "pt", "nl", "sc", "se", "in", "tr",
+        "it", "ru", "pl", "ro", "ph", "ku", "bg", "il", "la", "so", "ur", "pk", "cn", "jp", "kr", "us", "uk",
+        "au", "ca", "be", "vip", "prime", "tr vip", "id", "my", "afr"]
+    private static let arabicTags: Set<String> = ["8k", "4k", "ss", "f", "be", "nm", "sa", "ar", "◉"]
+
+    static func foreignCopy(_ name: String) -> Bool {
+        guard let c = tagCut(name) else { return false }
+        let tag = name[..<c].trimmingCharacters(in: .whitespaces).lowercased()
+        return !arabicTags.contains(tag) && (foreign.contains(tag) || tag.split(separator: " ").contains { foreign.contains(String($0)) })
+    }
+
     // Builds the index ahead of the first search, on Wi-Fi only; skipped when it is still fresh.
     func prewarm(_ k: Kind) {
         let f = Search.file(k)
