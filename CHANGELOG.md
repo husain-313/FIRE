@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2
+- **US Movies & Series and Shia Channels now show.** 2.1 kept whatever it had found the first time for 12 hours, so a package that didn't answer then stayed missing. Now the three ready-made packages are looked for again each time the app opens (or Refresh is pressed) until all three are there, and a channel not found in its usual package is found by name in the full channel list.
+
 ## 2.1
 What's new in FIRE on the TV (up to its 6.3), on iPhone and iPad.
 - **Ready-made Live packages.** After Big Leagues: 🎬 US Movies & Series (HBO, Showtime, Starz, Cinemax, AMC, FX…), 📰 News (Arabic first, then English), and 🕌 Shia Channels. One card per channel, its HD copy when there is one. Each has an All card.

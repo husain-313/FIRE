@@ -60,6 +60,13 @@ actor Search {
     // packages carry the same channel under the same plain label), sharpest first, the provider's
     // own Arabic copies before other countries'. Looked up by the playing copy's real server name,
     // since Big Leagues and the hand-picked packages show names of their own. Same as the TV (6.2).
+    // Every live channel (the index), for the hand-picked packages when a channel is not in its
+    // usual package. nil when the list could not be had.
+    func allLive() async -> [Item]? {
+        guard await ready(.live), let list = index[.live] else { return nil }
+        return list.map(\.item)
+    }
+
     func copies(_ name: String, keep: Int) async -> [Item] {
         guard await ready(.live), let list = index[.live] else { return [] }
         let real = list.first { $0.item.sid == keep }?.item.name ?? name

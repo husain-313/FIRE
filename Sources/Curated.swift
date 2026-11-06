@@ -92,13 +92,17 @@ enum Curated {
         return 2
     }
 
-    // Twice a day; between times (or with no answer) the saved lists.
+    // Twice a day once all three are made; until then at every look (app opened, Refresh), so one
+    // that failed (2.1 kept a half result for 12 hours: US Movies and Shia Channels never showed).
     static func refresh() async -> [String: [Item]] {
         let now = Date().timeIntervalSince1970
         let had = saved()
-        if now - ud.double(forKey: "at") < 12 * HOUR && ud.integer(forKey: "v") == version && !had.isEmpty { return had }
+        if now - ud.double(forKey: "at") < 12 * HOUR && ud.integer(forKey: "v") == version && had.count == packs.count { return had }
         var cats: [String: [Item]] = [:]
-        var out: [String: [Item]] = [:]
+        // Every channel by plain label, from the full list (the search index), made only when a
+        // channel is not in its usual package (the package may be numbered otherwise, or not answer).
+        var everywhere: [String: [Item]]?
+        var out = had
         for p in packs {
             var list: [Item] = []
             for w in p.wants {
@@ -109,10 +113,14 @@ enum Curated {
                     }
                     pool += cats[c] ?? []
                 }
-                let rx = "^(?:" + NSRegularExpression.escapedPattern(for: w.name) + ")$"
-                let best = pool.filter { !$0.name.contains("##") && Matches.label($0.name).uppercased().range(of: rx, options: .regularExpression) != nil }
-                    .min { rank($0.name) < rank($1.name) }
-                if let best { list.append(Item(kind: .live, sid: best.sid, name: w.shown, icon: best.icon, ext: best.ext)) }
+                var found = pool.filter { !$0.name.contains("##") && Matches.label($0.name).uppercased() == w.name }
+                if found.isEmpty {
+                    if everywhere == nil { everywhere = await byLabel() }
+                    found = everywhere?[w.name] ?? []
+                }
+                if let best = found.min(by: { rank($0.name) < rank($1.name) }) {
+                    list.append(Item(kind: .live, sid: best.sid, name: w.shown, icon: best.icon, ext: best.ext))
+                }
             }
             if !list.isEmpty { out[p.key] = list }
             if Task.isCancelled { return had }
@@ -120,8 +128,21 @@ enum Curated {
         guard !out.isEmpty else { return had }
         let d = ud
         for (k, l) in out { d.set(try? JSONEncoder().encode(l), forKey: k) }
-        d.set(now, forKey: "at")
-        d.set(version, forKey: "v")
+        if out.count == packs.count {
+            d.set(now, forKey: "at")
+            d.set(version, forKey: "v")
+        }
         return out
+    }
+
+    private static func byLabel() async -> [String: [Item]] {
+        guard let all = await Search.shared.allLive() else { return [:] }
+        return await Task.detached(priority: .utility) {
+            var map: [String: [Item]] = [:]
+            for it in all where !it.name.contains("##") {
+                map[Matches.label(it.name).uppercased(), default: []].append(it)
+            }
+            return map
+        }.value
     }
 }
