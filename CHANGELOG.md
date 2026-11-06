@@ -2,6 +2,7 @@
 
 ## 2.3
 - **Backup links.** Edit a subscription (Settings → Subscriptions) and add the other links of the same subscription under Backup links, one per line. When the server stops answering, FIRE tries them in order, moves to the first that works and keeps it, so lists, channels and films carry on. A channel or film that keeps failing also looks for a link that answers. Saving a subscription signs in on the first of its links that answers.
+- **The new server links are built in.** The first subscription moves to them by itself when its old server stops answering, with nothing to type in.
 
 ## 2.2
 - **US Movies & Series and Shia Channels now show.** 2.1 kept whatever it had found the first time for 12 hours, so a package that didn't answer then stayed missing. Now the three ready-made packages are looked for again each time the app opens (or Refresh is pressed) until all three are there, and a channel not found in its usual package is found by name in the full channel list.

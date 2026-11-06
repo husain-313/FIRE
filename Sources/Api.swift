@@ -11,7 +11,7 @@ struct Account: Codable, Equatable, Identifiable {
     var user: String
     var pass: String
     // Other links of the same subscription, tried in order when [server] stops answering; the
-    // one that answers becomes [server]. Typed in by the user, so no address is in this code.
+    // one that answers becomes [server].
     var backups: [String] = []
 
     private enum CodingKeys: String, CodingKey { case id, name, server, user, pass, backups }
@@ -25,10 +25,20 @@ struct Account: Codable, Equatable, Identifiable {
         self.backups = backups
     }
 
-    // [server] first, then the backups, each once.
+    // The provider's Strong links as of 2026-11-06 (fastest first, as the TV app has them). The
+    // first subscription (id "") falls back to them after its own links, so it carries on when
+    // its server is retired without anything typed in.
+    static let builtIn = [
+        "http://cf.xrtyqp.xyz",
+        "http://cf.qwctyr.xyz",
+        "http://cf.tenvax.xyz",
+        "http://magic47.xyz",
+    ]
+
+    // [server] first, then the backups (then the built-in links for the first subscription), each once.
     var servers: [String] {
         var seen = Set<String>()
-        return ([server] + backups).filter { seen.insert($0).inserted }
+        return ([server] + backups + (id.isEmpty ? Account.builtIn : [])).filter { seen.insert($0).inserted }
     }
 
     // The same subscription on another of its links; the old one goes to the backups.
