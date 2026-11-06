@@ -26,7 +26,7 @@ enum Store {
     }
 
     private static func file(_ query: String) -> URL {
-        dir.appendingPathComponent(hash((Api.account?.server ?? "") + (Api.account?.user ?? "") + query))
+        dir.appendingPathComponent(hash("acc" + (Api.account?.id ?? "") + (Api.account?.user ?? "") + query))
     }
 
     static func cached<T>(_ query: String) -> T? {

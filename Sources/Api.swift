@@ -10,15 +10,33 @@ struct Account: Codable, Equatable, Identifiable {
     var server: String
     var user: String
     var pass: String
+    // Other links of the same subscription, tried in order when [server] stops answering; the
+    // one that answers becomes [server]. Typed in by the user, so no address is in this code.
+    var backups: [String] = []
 
-    private enum CodingKeys: String, CodingKey { case id, name, server, user, pass }
+    private enum CodingKeys: String, CodingKey { case id, name, server, user, pass, backups }
 
-    init(id: String = "", name: String = "FIRE", server: String, user: String, pass: String) {
+    init(id: String = "", name: String = "FIRE", server: String, user: String, pass: String, backups: [String] = []) {
         self.id = id
         self.name = name
         self.server = server
         self.user = user
         self.pass = pass
+        self.backups = backups
+    }
+
+    // [server] first, then the backups, each once.
+    var servers: [String] {
+        var seen = Set<String>()
+        return ([server] + backups).filter { seen.insert($0).inserted }
+    }
+
+    // The same subscription on another of its links; the old one goes to the backups.
+    func on(_ host: String) -> Account {
+        var a = self
+        a.backups = servers.filter { $0 != host }
+        a.server = host
+        return a
     }
 
     // The account saved by older versions has no id or name.
@@ -29,6 +47,7 @@ struct Account: Codable, Equatable, Identifiable {
         server = try c.decode(String.self, forKey: .server)
         user = try c.decode(String.self, forKey: .user)
         pass = try c.decode(String.self, forKey: .pass)
+        backups = try c.decodeIfPresent([String].self, forKey: .backups) ?? []
     }
 
     // Added to the name of everything stored for this subscription.
@@ -99,6 +118,11 @@ struct Account: Codable, Equatable, Identifiable {
         return ("\(scheme)://\(host)\(port)", item("username"), item("password"))
     }
 
+    // Backup links typed one per line (or with spaces or commas between them), each as "http://host[:port]".
+    static func links(_ text: String) -> [String] {
+        text.components(separatedBy: CharacterSet(charactersIn: ", \n\t")).compactMap { parse($0)?.server }
+    }
+
     // "example.com" or "http://host:8080/" both become "http://host[:port]".
     static func normalize(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -138,17 +162,67 @@ enum Api {
         return URL(string: "\(a.server)/\(path)/\(enc(a.user))/\(enc(a.pass))/\(id).\(ext)")
     }
 
+    // A stream link made on an older link of the subscription, moved to the server in use now.
+    static func rehost(_ u: URL) -> URL {
+        guard let a = account else { return u }
+        let s = u.absoluteString
+        for h in a.servers where h != a.server && s.hasPrefix(h + "/") {
+            return URL(string: a.server + s.dropFirst(h.count)) ?? u
+        }
+        return u
+    }
+
     static func live(_ id: Int) -> URL? { stream("live", id, "ts") }
     static func movie(_ id: Int, _ ext: String?) -> URL? { stream("movie", id, ext ?? "mp4") }
     static func episode(_ id: Int, _ ext: String?) -> URL? { stream("series", id, ext ?? "mp4") }
 
     static func data(_ query: String, account a: Account? = account, timeout: TimeInterval = 30, wifiOnly: Bool = false) async throws -> Data {
-        guard let u = apiURL(query, account: a) else { throw ApiError.noAccount }
-        var r = URLRequest(url: u)
-        r.timeoutInterval = timeout
-        let (d, resp) = try await (wifiOnly ? wifiSession : session).data(for: r)
-        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
-        return d
+        guard let a else { throw ApiError.noAccount }
+        return try await failover(a) { b -> Data in
+            guard let u = apiURL(query, account: b) else { throw ApiError.noAccount }
+            var r = URLRequest(url: u)
+            r.timeoutInterval = timeout
+            let (d, resp) = try await (wifiOnly ? wifiSession : session).data(for: r)
+            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
+            return d
+        }
+    }
+
+    // Runs [work] on the account's server, then on each backup link in turn when it can't be
+    // reached. A backup that answers for the account in use becomes its server (kept in the
+    // Keychain), so channels and films follow it. A cancelled request isn't a dead server.
+    static func failover<T>(_ a: Account, _ work: (Account) async throws -> T) async throws -> T {
+        var first: Error?
+        for h in a.servers {
+            let b = a.on(h)
+            do {
+                let v = try await work(b)
+                if h != a.server { switchTo(b) }
+                return v
+            } catch {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
+                if first == nil { first = error }
+            }
+        }
+        throw first ?? ApiError.bad
+    }
+
+    private static let lock = NSLock()
+
+    private static func switchTo(_ b: Account) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let cur = account, cur.id == b.id, cur.server != b.server else { return }
+        account = b
+        Account.put(b)
+    }
+
+    // Called by the player when a stream keeps failing: finds a link of the account that
+    // answers now (it becomes the server). True when the server changed.
+    static func recheck() async -> Bool {
+        guard let a = account, a.servers.count > 1 else { return false }
+        _ = try? await data("", timeout: 10)
+        return account?.server != a.server
     }
 
     // Background fetches that must not spend mobile data or Low Data Mode.
@@ -165,20 +239,42 @@ enum Api {
 
     // Big lists (the whole film list is ~75 MB) go straight to a file.
     static func download(_ query: String, wifiOnly: Bool = false) async throws -> URL {
-        guard let u = apiURL(query) else { throw ApiError.noAccount }
-        var r = URLRequest(url: u)
-        r.timeoutInterval = 120
-        let (f, resp) = try await (wifiOnly ? wifiSession : session).download(for: r)
-        if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
+        guard let a = account else { throw ApiError.noAccount }
+        let f = try await failover(a) { b -> URL in
+            guard let u = apiURL(query, account: b) else { throw ApiError.noAccount }
+            var r = URLRequest(url: u)
+            r.timeoutInterval = 120
+            let (f, resp) = try await (wifiOnly ? wifiSession : session).download(for: r)
+            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
+            return f
+        }
         let mine = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         try FileManager.default.moveItem(at: f, to: mine)
         return mine
     }
 
-    // Signs in: true when the server knows this account and it is active.
-    static func check(_ a: Account) async -> String? {
+    // Signs in on the first link of [a] that answers: nil and the account on that link when the
+    // server knows it and it is active, otherwise the problem.
+    static func check(_ a: Account) async -> (problem: String?, account: Account) {
+        var last = "Can't reach the server. Check the address and your connection."
+        for h in a.servers {
+            let b = a.on(h)
+            let p = await checkOne(b)
+            if p == nil { return (nil, b) }
+            last = p!
+            // Wrong details or an ended account are the same on every link.
+            if p!.hasPrefix("Wrong") || p!.hasPrefix("This account") { break }
+        }
+        return (last, a)
+    }
+
+    private static func checkOne(_ a: Account) async -> String? {
         do {
-            let d = try await data("", account: a, timeout: 20)
+            guard let url = apiURL("", account: a) else { return "No account." }
+            var r = URLRequest(url: url)
+            r.timeoutInterval = 20
+            let (d, resp) = try await session.data(for: r)
+            if let h = resp as? HTTPURLResponse, h.statusCode != 200 { throw ApiError.http(h.statusCode) }
             guard let o = try JSONSerialization.jsonObject(with: d) as? [String: Any],
                   let u = o["user_info"] as? [String: Any] else { return "The server answered, but not like an IPTV server." }
             if int(u["auth"]) != 1 { return "Wrong username or password." }

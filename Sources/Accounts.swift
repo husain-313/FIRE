@@ -65,6 +65,7 @@ struct SubscriptionForm: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var link = ""
+    @State private var backups = ""
     @State private var user = ""
     @State private var pass = ""
     @State private var busy = false
@@ -86,6 +87,17 @@ struct SubscriptionForm: View {
                 } footer: {
                     Text("Paste a whole M3U link and the username and password fill themselves. Your subscriptions stay on this device only.")
                 }
+                Section {
+                    TextField("http://other-link.com", text: $backups, axis: .vertical)
+                        .lineLimit(2...6)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                } header: {
+                    Text("Backup links")
+                } footer: {
+                    Text("Other links of the same subscription, one per line. When the server stops answering, FIRE moves to the first of these that works and keeps it.")
+                }
                 if let error {
                     Section { Text(error).foregroundColor(.red.opacity(0.9)) }
                 }
@@ -102,6 +114,7 @@ struct SubscriptionForm: View {
                 guard let a = account, link.isEmpty else { return }
                 name = a.name
                 link = a.server
+                backups = a.backups.joined(separator: "\n")
                 user = a.user
                 pass = a.pass
             }
@@ -118,13 +131,16 @@ struct SubscriptionForm: View {
         let n = name.trimmingCharacters(in: .whitespaces)
         let shown = n.isEmpty ? (URLComponents(string: p.server)?.host ?? p.server) : n
         let id = account?.id ?? String(UUID().uuidString.prefix(8)).lowercased()
-        let a = Account(id: id, name: shown, server: p.server, user: u, pass: w)
+        let a0 = Account(id: id, name: shown, server: p.server, user: u, pass: w,
+                         backups: Account.links(backups).filter { $0 != p.server })
         busy = true
         error = nil
         Task { @MainActor in
-            let problem = await Api.check(a)
+            let r = await Api.check(a0)
             busy = false
-            if let problem { error = problem; return }
+            if let problem = r.problem { error = problem; return }
+            // Saved on the link that answered.
+            let a = r.account
             Account.put(a)
             dismiss()
             // A new one, or new details for the one in use, start fresh on it.

@@ -12,7 +12,7 @@ The repo is public: never commit account details. The account lives in the Keych
 
 All sources are flat in `Sources/`.
 - `Models.swift`: Item/Cat/Info/Prog/SeriesInfo, lenient Xtream parsing, `nameTags`/`cleanTitle`, `eachObject` (walks a huge JSON array object by object without loading it whole).
-- `Api.swift`: Keychain account, URLs, requests. `Store.swift`: disk + memory cache with TTL and stale fallback; `Q` query strings; `CatSort`.
+- `Api.swift`: Keychain account (with `backups`, other links of the same subscription typed in by the user; `failover` moves to the first that answers and saves it, `recheck`/`rehost` let the player follow), URLs, requests. No server address is ever written in code. `Store.swift`: disk + memory cache with TTL and stale fallback; `Q` query strings; `CatSort`.
 - `Search.swift`: actor; downloads the full list once a day to a TSV index and searches it in memory.
 - `Library.swift`: favourites, Continue Watching, resume points (UserDefaults), `Epg` actor (now/next).
 - `Images.swift`: downsampled image loader, `RemoteImage`, colours, `Metrics` (all sizes derive from screen width; `compact` < 600pt = phone layout).

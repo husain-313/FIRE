@@ -197,10 +197,10 @@ struct LoginView: View {
         busy = true
         error = nil
         Task {
-            let e = await Api.check(a)
+            let r = await Api.check(a)
             await MainActor.run {
                 busy = false
-                if let e { error = e } else { app.signIn(a) }
+                if let e = r.problem { error = e } else { app.signIn(r.account) }
             }
         }
     }
@@ -215,7 +215,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("Account") {
-                    LabeledContent("Server", value: app.account?.server ?? "")
+                    LabeledContent("Server", value: Api.account?.server ?? app.account?.server ?? "")
                     LabeledContent("Username", value: app.account?.user ?? "")
                     if let e = app.expiry, !e.isEmpty { LabeledContent("Expires", value: e) }
                     NavigationLink("Subscriptions") { SubscriptionsList() }

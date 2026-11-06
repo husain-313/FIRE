@@ -573,12 +573,14 @@ struct PlayerView: View {
         let delay = UInt64(min(retries, 3)) * 1_000_000_000
         Task {
             try? await Task.sleep(nanoseconds: delay)
+            // From the second failure on, a backup link of the subscription may take over.
+            if retries >= 2 { _ = await Api.recheck() }
             if isLive {
                 play(index)
             } else if let v = vod {
                 let at = vlc.time > 1 ? vlc.time : lib.resume(v.key)
                 hook()
-                vlc.open(v.url, live: false, start: at)
+                vlc.open(Api.rehost(v.url), live: false, start: at)
             }
         }
     }
