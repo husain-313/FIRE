@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-FIRE for iPhone and iPad: a SwiftUI Xtream IPTV player (iOS 16+, `TARGETED_DEVICE_FAMILY` 1,2, all orientations, always dark). It mirrors the Android TV app (`husain-313/FIRE-TV`, `D:\ai\fire`; iOS 2.1 matches TV 6.3 except the server list from the provider and fastest-server pick, which stay out of this public repo) (same logic for category sorting, Arabic-first search, name tags, resume rules); keep the two in step when behaviour changes.
+FIRE for iPhone and iPad: a SwiftUI Xtream IPTV player (iOS 16+, `TARGETED_DEVICE_FAMILY` 1,2, all orientations, always dark). It mirrors the Android TV app (`husain-313/FIRE-TV`, `D:\ai\fire`; iOS 2.1 matches TV 6.3 except the server list fetched from the provider (its API and keys stay out of this public repo) and the fastest-server pick) (same logic for category sorting, Arabic-first search, name tags, resume rules); keep the two in step when behaviour changes.
 
 ## Building
 
@@ -12,7 +12,7 @@ The repo is public: never commit account details. The account lives in the Keych
 
 All sources are flat in `Sources/`.
 - `Models.swift`: Item/Cat/Info/Prog/SeriesInfo, lenient Xtream parsing, `nameTags`/`cleanTitle`, `eachObject` (walks a huge JSON array object by object without loading it whole).
-- `Api.swift`: Keychain account (with `backups`, other links of the same subscription typed in by the user; `failover` moves to the first that answers and saves it, `recheck`/`rehost` let the player follow), URLs, requests. No server address is ever written in code. `Store.swift`: disk + memory cache with TTL and stale fallback; `Q` query strings; `CatSort`.
+- `Api.swift`: Keychain account (with `backups`, other links of the same subscription typed in by the user, and `Account.builtIn`, the provider's Strong links that the first subscription (id "") falls back to — same list as `BUILT_IN` in the TV app's `Api.kt`, keep them in step; `failover` moves to the first that answers and saves it, `recheck`/`rehost` let the player follow), URLs, requests. `Store.swift`: disk + memory cache with TTL and stale fallback; `Q` query strings; `CatSort`.
 - `Search.swift`: actor; downloads the full list once a day to a TSV index and searches it in memory.
 - `Library.swift`: favourites, Continue Watching, resume points (UserDefaults), `Epg` actor (now/next).
 - `Images.swift`: downsampled image loader, `RemoteImage`, colours, `Metrics` (all sizes derive from screen width; `compact` < 600pt = phone layout).
