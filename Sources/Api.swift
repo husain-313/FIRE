@@ -25,20 +25,11 @@ struct Account: Codable, Equatable, Identifiable {
         self.backups = backups
     }
 
-    // The provider's Strong links as of 2026-11-06 (fastest first, as the TV app has them). The
-    // first subscription (id "") falls back to them after its own links, so it carries on when
-    // its server is retired without anything typed in.
-    static let builtIn = [
-        "http://cf.REMOVED.xyz",
-        "http://cf.REMOVED.xyz",
-        "http://cf.REMOVED.xyz",
-        "http://REMOVED.xyz",
-    ]
-
-    // [server] first, then the backups (then the built-in links for the first subscription), each once.
+    // [server] first, then the backups, each once. No server link is ever written in the code:
+    // the repo is public, so every link is typed in by the user (Backup links) and kept in the Keychain.
     var servers: [String] {
         var seen = Set<String>()
-        return ([server] + backups + (id.isEmpty ? Account.builtIn : [])).filter { seen.insert($0).inserted }
+        return ([server] + backups).filter { seen.insert($0).inserted }
     }
 
     // The same subscription on another of its links; the old one goes to the backups.

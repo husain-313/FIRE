@@ -7,10 +7,10 @@ What's new in FIRE on the TV (up to its 6.11), on iPhone and iPad.
 - **Mine on Live.** The pin button next to Refresh shows only the matches and the ready-made rows (Big Leagues, Movies & Series, News, Shia, recent, favourites). Every server package stays in the Packages list to open; the All button brings them back as rows.
 - The adult package lists its titles newest first.
 - Faster with many hidden packages.
+- No server links are written into the app any more. Add your subscription's other links yourself under Backup links (Settings → Subscriptions → edit); the app moves to them by itself when the server stops answering.
 
 ## 2.3
 - **Backup links.** Edit a subscription (Settings → Subscriptions) and add the other links of the same subscription under Backup links, one per line. When the server stops answering, FIRE tries them in order, moves to the first that works and keeps it, so lists, channels and films carry on. A channel or film that keeps failing also looks for a link that answers. Saving a subscription signs in on the first of its links that answers.
-- **The new server links are built in.** The first subscription moves to them by itself when its old server stops answering, with nothing to type in.
 
 ## 2.2
 - **US Movies & Series and Shia Channels now show.** 2.1 kept whatever it had found the first time for 12 hours, so a package that didn't answer then stayed missing. Now the three ready-made packages are looked for again each time the app opens (or Refresh is pressed) until all three are there, and a channel not found in its usual package is found by name in the full channel list.

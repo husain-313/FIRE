@@ -12,7 +12,7 @@ The repo is public: never commit account details. The account lives in the Keych
 
 All sources are flat in `Sources/`.
 - `Models.swift`: Item/Cat/Info/Prog/SeriesInfo, lenient Xtream parsing, `nameTags`/`cleanTitle`, `eachObject` (walks a huge JSON array object by object without loading it whole).
-- `Api.swift`: Keychain account (with `backups`, other links of the same subscription typed in by the user, and `Account.builtIn`, the provider's Strong links that the first subscription (id "") falls back to — same list as `BUILT_IN` in the TV app's `Api.kt`, keep them in step; `failover` moves to the first that answers and saves it, `recheck`/`rehost` let the player follow), URLs, requests. `Store.swift`: disk + memory cache with TTL and stale fallback; `Q` query strings; `CatSort`.
+- `Api.swift`: Keychain account (with `backups`, other links of the same subscription typed in by the user and kept in the Keychain; never write a server link in the code, the repo is public; `failover` moves to the first that answers and saves it, `recheck`/`rehost` let the player follow), URLs, requests. `Store.swift`: disk + memory cache with TTL and stale fallback; `Q` query strings; `CatSort`.
 - `Search.swift`: actor; downloads the full list once a day to a TSV index and searches it in memory.
 - `Library.swift`: favourites, Continue Watching, resume points (UserDefaults), `Epg` actor (now/next).
 - `Images.swift`: downsampled image loader, `RemoteImage`, colours, `Metrics` (all sizes derive from screen width; `compact` < 600pt = phone layout).
