@@ -132,11 +132,14 @@ actor Search {
     }
 
     // Builds the index ahead of the first search, on Wi-Fi only; skipped when it is still fresh.
-    func prewarm(_ k: Kind) {
+    // The film and series lists also feed Recently Added, so they are read again when that is
+    // missing or half a day old. True when a new list was read.
+    @discardableResult
+    func prewarm(_ k: Kind) async -> Bool {
         let f = Search.file(k)
         let age = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Date().timeIntervalSince($0) }
-        if let age, age < DAY { return }
-        _ = build(k, wifiOnly: true)
+        if let age, age < DAY, !NewList.stale(k) { return false }
+        return await build(k, wifiOnly: true).value
     }
 
     // Another subscription came into use; its index files are kept apart by name.
@@ -147,7 +150,7 @@ actor Search {
         // Every account's index, so signing out (account already gone) still clears them.
         let d = Search.file(.live).deletingLastPathComponent()
         let files = (try? FileManager.default.contentsOfDirectory(at: d, includingPropertiesForKeys: nil)) ?? []
-        for f in files where f.lastPathComponent.hasPrefix("idx_") { try? FileManager.default.removeItem(at: f) }
+        for f in files where f.lastPathComponent.hasPrefix("idx_") || f.lastPathComponent.hasPrefix("new_") { try? FileManager.default.removeItem(at: f) }
     }
 
     private func ready(_ k: Kind) async -> Bool {
@@ -177,12 +180,15 @@ actor Search {
                 defer { try? FileManager.default.removeItem(at: tmp) }
                 guard let d = try? Data(contentsOf: tmp, options: .alwaysMapped) else { return nil }
                 var out = ""
+                let fresh = k == .live ? nil : NewList.Collector(k)
                 eachObject(in: d) { o in
                     guard let it = item(k, o) else { return }
+                    fresh?.add(it)
                     let name = it.name.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ")
                     out += "\(it.sid)\t\(name)\t\(it.icon ?? "")\t\(it.ext ?? "")\n"
                 }
                 guard !out.isEmpty, (try? out.write(to: f, atomically: true, encoding: .utf8)) != nil else { return nil }
+                fresh?.save()
                 return Search.read(k, f)
             }.value
             if let entries { self.index[k] = entries }
@@ -237,7 +243,7 @@ actor Search {
     // Films and series: foreign copies with Arabic subtitles first ("AR-SUBS - Dune", "4K-AR - The
     // Batman"), then other foreign copies, dubbed ones ("AR-DUB - …"), Arabic titles, and copies
     // marked for another language ("FR - …") last.
-    private static func vodRank(_ n: String) -> Int {
+    static func vodRank(_ n: String) -> Int {
         var tags: [String] = []
         var title = Substring(n)
         if let r = n.range(of: " - "), (1...16).contains(n.distance(from: n.startIndex, to: r.lowerBound)) {

@@ -59,6 +59,7 @@ struct PackageView: View {
         case "cw": return lib.watchList(ref.kind).map(\.item)
         case "fav": return lib.favList(ref.kind)
         case "recent": return lib.recent
+        case "new": return NewList.saved(ref.kind)
         case "big": return sports.big
         case "football": return sports.football
         case let k where k.hasPrefix("pk:"): return sports.curated[k] ?? []
@@ -111,6 +112,7 @@ struct PackageView: View {
             guard let id = ref.catId, loaded == nil else { return }
             let k = ref.kind
             loaded = await Store.load(Q.streams(k, Cat(id: id, name: ref.title)), ttl: 6 * HOUR) { parseItems(k, $0) }
+                .map { NewList.order(k, ref.title, $0) }
             failed = loaded == nil
         }
     }
@@ -179,6 +181,8 @@ struct PackageView: View {
 struct PackagesSheet: View {
     let kind: Kind
     let rows: [PackageRef]
+    // Off in Live's Mine mode: the list then holds every server package, and hiding has no use.
+    var canHide = true
     let pick: (PackageRef) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
@@ -196,7 +200,7 @@ struct PackagesSheet: View {
     }
 
     // Only packages can be hidden (not Continue Watching, favourites, matches…).
-    private var hideable: [PackageRef] { shown.filter { Hidden.hideable($0.key) } }
+    private var hideable: [PackageRef] { canHide ? shown.filter { Hidden.hideable($0.key) } : [] }
 
     var body: some View {
         NavigationStack {
@@ -208,7 +212,7 @@ struct PackagesSheet: View {
                     }
                 }
                 ForEach(shown, id: \.key) { r in
-                    let can = Hidden.hideable(r.key)
+                    let can = canHide && Hidden.hideable(r.key)
                     Button {
                         if selecting {
                             guard can else { return }
@@ -259,7 +263,7 @@ struct PackagesSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     if selecting {
                         Button("Hide (\(picked.count))") { confirm = true }.disabled(picked.isEmpty)
-                    } else {
+                    } else if canHide {
                         Button("Select") { selecting = true; picked = [] }
                     }
                 }

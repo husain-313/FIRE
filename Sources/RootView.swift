@@ -142,6 +142,8 @@ final class BrowseModel: ObservableObject {
     @Published var heroInfo: Info?
     @Published var heroNow: (Prog?, Prog?) = (nil, nil)
     @Published var scrollTop = 0
+    // Movies and Series: Recently Added (NewList), read when the search index is.
+    @Published var fresh: [Item] = []
     private var searchTask: Task<Void, Never>?
     private var started = false
 
@@ -164,14 +166,19 @@ final class BrowseModel: ObservableObject {
         }
         cats = CatSort.sort(c, live: kind == .live)
         if kind == .live, let cats { AppState.liveCats = cats }
-        await pickHero()
-        // Get search ready before it is needed (on Wi-Fi), a little after the rows have loaded.
         let k = kind
-        Task.detached(priority: .background) {
-            try? await Task.sleep(nanoseconds: UInt64(8 + k.rawValue * 20) * 1_000_000_000)
-            await Search.shared.prewarm(k)
+        if k != .live { fresh = NewList.saved(k) }
+        await pickHero()
+        // Get search ready before it is needed (on Wi-Fi), a little after the rows have loaded;
+        // sooner when Recently Added has nothing yet. A new list brings a new Recently Added.
+        let wait = k != .live && fresh.isEmpty ? 2 + k.rawValue * 4 : 8 + k.rawValue * 20
+        Task.detached(priority: .background) { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(wait) * 1_000_000_000)
+            if await Search.shared.prewarm(k), k != .live { await self?.reloadFresh() }
         }
     }
+
+    private func reloadFresh() { fresh = NewList.saved(kind) }
 
     // The newest thing left part way, else the first title of the first package.
     func pickHero() async {
@@ -251,8 +258,11 @@ struct BrowseView: View {
                     HStack(spacing: 10) {
                         searchField
                         packagesButton
-                        if model.kind == .live { refreshButton }
-                        if !hidden.list(model.kind).isEmpty { unhideButton }
+                        if model.kind == .live {
+                            refreshButton
+                            mineButton
+                        }
+                        if !hidden.list(model.kind).isEmpty && !mine { unhideButton }
                     }
                     .padding(.horizontal, m.pad)
                     if model.query.trimmingCharacters(in: .whitespaces).count >= 2 {
@@ -274,7 +284,7 @@ struct BrowseView: View {
             Text(sports.notice ?? "")
         }
         .sheet(isPresented: $packages) {
-            PackagesSheet(kind: model.kind, rows: rows) { r in app.path.append(.package(r)) }
+            PackagesSheet(kind: model.kind, rows: rows, canHide: !mine) { r in app.path.append(.package(r)) }
         }
         .sheet(isPresented: $unhide) { UnhideSheet(kind: model.kind) }
     }
@@ -353,10 +363,30 @@ struct BrowseView: View {
         .accessibilityLabel("Hidden packages")
     }
 
+    // Live: Mine shows only the matches and the hand-picked rows; All brings the server's packages
+    // back as rows. Every package stays in the Packages list either way (TV 6.7).
+    private var mineButton: some View {
+        Button { hidden.mineOnly.toggle() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: mine ? "square.stack.3d.up" : "pin")
+                if !m.compact { Text(mine ? "All" : "Mine") }
+            }
+            .font(.system(size: 16, weight: .semibold)).foregroundColor(.white)
+            .padding(.horizontal, m.compact ? 0 : 18)
+            .frame(minWidth: 48, minHeight: 48)
+            .background(Color.white.opacity(0.08), in: Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(mine ? "Show all packages" : "Show only my rows")
+    }
+
+    private var mine: Bool { model.kind == .live && hidden.mineOnly }
+
     private func shows(_ key: String) -> Bool { !hidden.isHidden(model.kind, key) }
 
-    // The server's packages less the hidden ones.
-    private var shownCats: [Cat]? { model.cats.map { $0.filter { shows("c:" + $0.id) } } }
+    // The server's packages less the hidden ones (none as rows in Mine mode).
+    private var shownCats: [Cat]? { mine ? [] : model.cats.map { $0.filter { shows("c:" + $0.id) } } }
 
     private func ref(_ key: String, _ title: String) -> PackageRef { PackageRef(kind: model.kind, key: key, title: title) }
 
@@ -369,11 +399,13 @@ struct BrowseView: View {
             for p in Curated.packs where !(sports.curated[p.key] ?? []).isEmpty && shows(p.key) { out.append(ref(p.key, p.title)) }
             if !sports.football.isEmpty { out.append(ref("football", Self.footballTitle)) }
             if !lib.recent.isEmpty { out.append(ref("recent", "Recent Channels")) }
-        } else if !lib.watchList(model.kind).isEmpty {
-            out.append(ref("cw", "Continue Watching"))
+        } else {
+            if !lib.watchList(model.kind).isEmpty { out.append(ref("cw", "Continue Watching")) }
+            if !model.fresh.isEmpty { out.append(ref("new", NewList.title)) }
         }
         if !lib.favList(model.kind).isEmpty { out.append(ref("fav", model.kind == .live ? "Favorite Channels" : "My List")) }
-        out += (shownCats ?? []).map { ref("c:" + $0.id, $0.name) }
+        // Mine mode: every server package (hidden or not) after the rows, to open whole.
+        out += ((mine ? model.cats : shownCats) ?? []).map { ref("c:" + $0.id, $0.name) }
         return out
     }
 
@@ -454,6 +486,18 @@ struct BrowseView: View {
                                onRemove: { id in if let w = cw.first(where: { $0.id == id }) { lib.removeWatching(w.kind, w.id) } },
                                onOpenAll: { openRow($0, $1) })
             }
+            // What the server added last (for series, updated last), newest first.
+            let fresh = model.fresh
+            if !fresh.isEmpty {
+                RailShell(title: NewList.title) {
+                    AllCard(count: fresh.count, style: .poster).onTapGesture { openRow("new", NewList.title) }
+                    ForEach(fresh) { it in
+                        Card(item: it, style: .poster)
+                            .onTapGesture { app.open(it, rail: fresh, cats: [], cat: nil) }
+                            .contextMenu { FavButton(item: it) }
+                    }
+                }
+            }
         }
         let favs = lib.favList(model.kind)
         if !favs.isEmpty {
@@ -465,7 +509,9 @@ struct BrowseView: View {
                 }
             }
         }
-        if let cats = shownCats {
+        if mine {
+            EmptyView()
+        } else if let cats = shownCats {
             ForEach(Array(cats.enumerated()), id: \.element.id) { i, c in
                 CatRail(kind: model.kind, cat: c, index: i, cats: cats)
             }
@@ -631,7 +677,8 @@ struct CatRail: View {
         }
         .task {
             if items == nil {
-                items = await Store.load(Q.streams(kind, cat), ttl: 6 * HOUR) { parseItems(kind, $0) } ?? []
+                let got = await Store.load(Q.streams(kind, cat), ttl: 6 * HOUR) { parseItems(kind, $0) } ?? []
+                items = NewList.order(kind, cat.name, got)
             }
         }
     }

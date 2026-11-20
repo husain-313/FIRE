@@ -1,6 +1,6 @@
 import SwiftUI
 
-// Packages taken off a tab (the same as FIRE on the TV, its 5.1-6.0): a server package ("c:<id>"),
+// Packages taken off a tab (the same as FIRE on the TV, its 5.1-6.7): a server package ("c:<id>"),
 // a hand-picked one ("pk:…") or Big Leagues ("big"). Kept per tab and per subscription; Unhide
 // brings them back.
 final class Hidden: ObservableObject {
@@ -11,7 +11,12 @@ final class Hidden: ObservableObject {
         let title: String
     }
 
-    @Published private(set) var all: [Entry] = []
+    @Published private(set) var all: [Entry] = [] { didSet { ids = Set(all.map(\.id)) } }
+    // The same ids as a set: with hundreds hidden, a lookup per package per redraw froze the TV (6.4).
+    private var ids: Set<String> = []
+    // Live only: the tab shows just the matches and the hand-picked rows, none of the server's
+    // packages; those all stay in the Packages list (TV 6.7). The hidden list is kept for All.
+    @Published var mineOnly = false { didSet { if mineOnly != oldValue { ud.set(mineOnly, forKey: "mine_only") } } }
     private var ud = Hidden.defaults()
 
     private init() { load() }
@@ -23,6 +28,7 @@ final class Hidden: ObservableObject {
 
     private func load() {
         all = ud.data(forKey: "hidden").flatMap { try? JSONDecoder().decode([Entry].self, from: $0) } ?? []
+        mineOnly = ud.bool(forKey: "mine_only")
     }
 
     // Another subscription came into use.
@@ -35,7 +41,7 @@ final class Hidden: ObservableObject {
 
     private static func id(_ k: Kind, _ key: String) -> String { "\(k.rawValue)|\(key)" }
 
-    func isHidden(_ k: Kind, _ key: String) -> Bool { all.contains { $0.id == Hidden.id(k, key) } }
+    func isHidden(_ k: Kind, _ key: String) -> Bool { ids.contains(Hidden.id(k, key)) }
 
     func list(_ k: Kind) -> [Entry] { all.filter { $0.id.hasPrefix("\(k.rawValue)|") } }
 

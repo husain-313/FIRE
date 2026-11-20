@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.4
+What's new in FIRE on the TV (up to its 6.11), on iPhone and iPad.
+- **Recently Added on Movies and Series.** A new row after Continue Watching: the 60 titles the server added last, newest first, with an All card. On Series it follows the last update, so a series that just got a new episode moves to the front. Titles marked for other languages (Persian, Indian, Scandinavian…) and adult ones are left out. It fills in the first time the full list is read on Wi-Fi, then every half day.
+- **Movies & Series package** (was US Movies & Series): now 50 channels, starting with MBC 2 / Max / Action, OSN Movies, beIN Movies and Series, then HBO, Showtime, Starz and the other US channels, then Sky Cinema and Sky Atlantic.
+- **Mine on Live.** The pin button next to Refresh shows only the matches and the ready-made rows (Big Leagues, Movies & Series, News, Shia, recent, favourites). Every server package stays in the Packages list to open; the All button brings them back as rows.
+- The adult package lists its titles newest first.
+- Faster with many hidden packages.
+
 ## 2.3
 - **Backup links.** Edit a subscription (Settings → Subscriptions) and add the other links of the same subscription under Backup links, one per line. When the server stops answering, FIRE tries them in order, moves to the first that works and keeps it, so lists, channels and films carry on. A channel or film that keeps failing also looks for a link that answers. Saving a subscription signs in on the first of its links that answers.
 - **The new server links are built in.** The first subscription moves to them by itself when its old server stops answering, with nothing to type in.

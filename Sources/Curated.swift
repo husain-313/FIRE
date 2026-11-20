@@ -1,7 +1,7 @@
 import Foundation
 
 // Hand-picked Live packages built from the provider's own packages (the same as FIRE on the TV,
-// its 5.1): one card per channel, its HD copy when there is one, in the order listed here.
+// its 6.5): one card per channel, its HD copy when there is one, in the order listed here.
 // Rebuilt twice a day (channel ids can change); the saved lists serve between times.
 enum Curated {
     // [cats]: provider packages to look in; [name]: the channel's plain label (Matches.label,
@@ -10,24 +10,40 @@ enum Curated {
     struct Pack { let key: String; let title: String; let wants: [Want] }
 
     private static func us(_ n: String, _ s: String) -> Want { Want(cats: ["493", "58"], name: n, shown: s) }
+    private static func mbc(_ n: String, _ s: String) -> Want { Want(cats: ["237"], name: n, shown: s) }
+    private static func osn(_ n: String, _ s: String) -> Want { Want(cats: ["1794", "236"], name: n, shown: s) }
+    private static func bein(_ n: String, _ s: String) -> Want { Want(cats: ["1655"], name: n, shown: s) }
+    private static func sky(_ n: String, _ s: String) -> Want { Want(cats: ["1963", "302"], name: n, shown: s) }
     private static func ar(_ n: String, _ s: String) -> Want { Want(cats: ["104"], name: n, shown: s) }
     private static func usNews(_ n: String, _ s: String) -> Want { Want(cats: ["491"], name: n, shown: s) }
     private static func shia(_ n: String, _ s: String) -> Want { Want(cats: ["713"], name: n, shown: s) }
 
     static let packs: [Pack] = [
-        Pack(key: "pk:movies", title: "🎬  US Movies & Series", wants: [
+        // English-language films and series from the well-known networks: the Gulf ones first
+        // (English with Arabic subtitles), then the US premium channels, then Sky UK (TV 6.5).
+        Pack(key: "pk:movies", title: "🎬  Movies & Series", wants: [
+            mbc("MBC 2", "MBC 2"), mbc("MBC MAX", "MBC Max"), mbc("MBC ACTION", "MBC Action"),
+            osn("(OSN )?MOVIES PREMIERE", "OSN Movies Premiere"), osn("(OSN )?MOVIES ACTION|ACTION", "OSN Movies Action"),
+            osn("MOVIES HOLLYWOOD|OSN MOVIES HOLLOWAY", "OSN Movies Hollywood"), osn("COMEDY|OSN COMDEY", "OSN Movies Comedy"),
+            osn("FAMILY|OSN MOVIES FAMILY", "OSN Movies Family"), osn("OSN MOVIES HORROR", "OSN Movies Horror"),
+            osn("(OSN )?SHOWCASE", "OSN Showcase"), osn("(OSN )?CRIME", "OSN Crime"), osn("TV ONE|OSN ONE", "OSN One"),
+            bein("BEIN MOVIES 1", "beIN Movies 1"), bein("BEIN MOVIES 2", "beIN Movies 2"),
+            bein("BEIN MOVIES 3", "beIN Movies 3"), bein("BEIN MOVIES 4", "beIN Movies 4"),
+            bein("BEIN SERIES 1", "beIN Series 1"), bein("BEIN SERIES 2", "beIN Series 2"),
+            bein("BEIN STAR MOVIES", "Star Movies"),
             us("HBO", "HBO"), us("HBO 2", "HBO 2"), us("HBO SIGNATURE", "HBO Signature"),
             us("HBO COMEDY", "HBO Comedy"), us("HBO FAMILY", "HBO Family"),
-            us("SHOWTIME", "Showtime"), us("SHOWTIME 2", "Showtime 2"),
-            us("SHOWTIME EXTREME", "Showtime Extreme"), us("SHOWTIME SHOWCASE", "Showtime Showcase"),
-            us("CINEMAX", "Cinemax"), us("MOVIEMAX", "MovieMax"), us("CINEMAX THRILLERMAX", "ThrillerMax"),
-            us("STARZ", "Starz"), us("STARZ CINEMA", "Starz Cinema"), us("STARZ EDGE", "Starz Edge"),
-            us("STARZ COMEDY", "Starz Comedy"), us("STARZ ENCORE", "Starz Encore"),
-            us("STARZ ENCORE ACTION", "Starz Encore Action"), us("EPIX", "MGM+"),
-            us("THE MOVIE CHANNEL", "The Movie Channel"), us("SONY MOVIE CHANNEL", "Sony Movie Channel"),
-            us("FX MOVIES", "FX Movies"), us("TCM", "TCM"), us("AMC", "AMC"), us("FX", "FX"), us("FXX", "FXX"),
-            us("TNT", "TNT"), us("TBS", "TBS"), us("USA NETWORK", "USA Network"), us("SYFY", "SYFY"),
-            us("PARAMOUNT", "Paramount Network"), us("A&E", "A&E"), us("IFC", "IFC"),
+            us("SHOWTIME", "Showtime"), us("SHOWTIME 2", "Showtime 2"), us("CINEMAX", "Cinemax"),
+            us("STARZ", "Starz"), us("STARZ EDGE", "Starz Edge"), us("EPIX", "MGM+"),
+            us("THE MOVIE CHANNEL", "The Movie Channel"), us("FX MOVIES", "FX Movies"),
+            us("AMC", "AMC"), us("FX", "FX"), us("TNT", "TNT"), us("USA NETWORK", "USA Network"),
+            us("SYFY", "SYFY"), us("PARAMOUNT", "Paramount Network"),
+            sky("SKY (CINEMA )?PREMIERE", "Sky Cinema Premiere"), sky("SKY CINEMA HITS", "Sky Cinema Hits"),
+            sky("SKY (CINEMA )?ACTION", "Sky Cinema Action"), sky("SKY (CINEMA )?THRILLER", "Sky Cinema Thriller"),
+            sky("SKY (CINEMA )?GREATS", "Sky Cinema Greats"), sky("SKY (CINEMA )?(SCFI/HOR|SCIFI HORROR)", "Sky Cinema Sci-Fi & Horror"),
+            sky("SKY CINEMA COMEDY", "Sky Cinema Comedy"), sky("SKY CINEMA FAMILY", "Sky Cinema Family"),
+            Want(cats: ["1963", "302", "47"], name: "SKY ATLANTIC", shown: "Sky Atlantic"), sky("SKY MAX", "Sky Max"),
+            sky("SKY SHOWCASE", "Sky Showcase"), sky("SKY CRIME", "Sky Crime"),
         ]),
         // Arabic first, then English.
         Pack(key: "pk:news", title: "📰  News", wants: [
@@ -63,7 +79,7 @@ enum Curated {
 
     static func title(_ key: String) -> String? { packs.first { $0.key == key }?.title }
 
-    private static let version = 1
+    private static let version = 2
     // Each subscription has its own; the first one (no tag) keeps the old place.
     private static var ud: UserDefaults { UserDefaults(suiteName: "fire.curated" + (Api.account?.tag ?? "")) ?? .standard }
 
@@ -113,10 +129,16 @@ enum Curated {
                     }
                     pool += cats[c] ?? []
                 }
-                var found = pool.filter { !$0.name.contains("##") && Matches.label($0.name).uppercased() == w.name }
+                // [name] is a whole-label pattern ("(OSN )?CRIME"), as on the TV.
+                let rx = try? NSRegularExpression(pattern: "^(?:" + w.name + ")$")
+                func fits(_ label: String) -> Bool {
+                    guard let rx else { return label == w.name }
+                    return rx.firstMatch(in: label, range: NSRange(label.startIndex..., in: label)) != nil
+                }
+                var found = pool.filter { !$0.name.contains("##") && fits(Matches.label($0.name).uppercased()) }
                 if found.isEmpty {
                     if everywhere == nil { everywhere = await byLabel() }
-                    found = everywhere?[w.name] ?? []
+                    found = everywhere?.filter { fits($0.key) }.flatMap { $0.value } ?? []
                 }
                 if let best = found.min(by: { rank($0.name) < rank($1.name) }) {
                     list.append(Item(kind: .live, sid: best.sid, name: w.shown, icon: best.icon, ext: best.ext))

@@ -24,6 +24,10 @@ struct Item: Codable, Hashable, Identifiable {
     var sub: String? = nil
     // How far it was watched, 0...1; nil shows no bar.
     var progress: Double? = nil
+    // When the server added it (Unix seconds); for series the last change, so a new episode moves
+    // it up (the series list carries no added date). Used for Recently Added. Optional, so the
+    // lists saved by older versions still read.
+    var added: Int? = nil
 
     var id: String { "\(kind.rawValue):\(sid)" }
 }
@@ -174,7 +178,9 @@ func item(_ kind: Kind, _ o: [String: Any]) -> Item? {
     var it = Item(kind: kind, sid: id, name: (str(o["name"]) ?? "").trimmingCharacters(in: .whitespaces),
                   icon: http(str(o["stream_icon"] ?? o["cover"])), ext: str(o["container_extension"]))
     it.num = str(o["num"])
+    it.added = int(o["added"]).flatMap { $0 > 0 ? $0 : nil }
     if kind == .series {
+        if it.added == nil { it.added = int(o["last_modified"]).flatMap { $0 > 0 ? $0 : nil } }
         it.backdrop = http(firstStr(o["backdrop_path"]))
         it.plot = nonEmpty(str(o["plot"]))
         it.meta = nonEmpty(metaLine(year: str(o["releaseDate"] ?? o["releasedate"]), rating: str(o["rating"]), secs: 0, genre: str(o["genre"])))
